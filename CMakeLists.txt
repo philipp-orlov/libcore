@@ -17,3 +17,4 @@ endif()
 
 # One directory per future repository; each is self-contained and depends only on the ones before it.
 add_subdirectory(libbase)
+add_subdirectory(libsys)
