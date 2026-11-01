@@ -6,7 +6,7 @@ target_link_libraries(develop_sched PUBLIC develop::sys develop::base)
 develop_target_defaults(develop_sched)
 
 if(DEVELOP_BUILD_TESTS)
-    foreach(t thread_pool parallel_for)
+    foreach(t thread_pool parallel_for timer_heap)
         add_executable(sched_test_${t} tests/test_${t}.cpp)
         target_link_libraries(sched_test_${t} PRIVATE develop::sched)
         target_include_directories(sched_test_${t} PRIVATE ${CMAKE_SOURCE_DIR}/libbase/tests ${CMAKE_SOURCE_DIR}/libmem/tests)
