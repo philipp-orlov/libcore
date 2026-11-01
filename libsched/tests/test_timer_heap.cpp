@@ -5,7 +5,7 @@
 #include <random>
 #include <vector>
 
-#include "alloc_counter.hpp"
+#include "bench/alloc_budget.hpp"
 #include "mini_test.hpp"
 #include "sched/timer_heap.hpp"
 

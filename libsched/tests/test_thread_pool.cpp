@@ -7,7 +7,7 @@
 #include <thread>
 #include <vector>
 
-#include "alloc_counter.hpp"
+#include "bench/alloc_budget.hpp"
 #include "mini_test.hpp"
 #include "sched/thread_pool.hpp"
 

@@ -6,7 +6,7 @@
 #include <thread>
 #include <vector>
 
-#include "alloc_counter.hpp"
+#include "bench/alloc_budget.hpp"
 #include "mem/size_class_pool.hpp"
 #include "mini_test.hpp"
 #include "sys/proc.hpp"

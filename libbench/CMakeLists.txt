@@ -1,0 +1,15 @@
+add_library(develop_bench STATIC soak/soak.cpp)
+add_library(develop::bench ALIAS develop_bench)
+target_include_directories(develop_bench PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
+target_compile_features(develop_bench PUBLIC cxx_std_17)
+target_link_libraries(develop_bench PUBLIC develop::sys develop::base)
+develop_target_defaults(develop_bench)
+
+if(DEVELOP_BUILD_TESTS)
+    add_executable(bench_soak_memory soak/soak_memory.cpp)
+    target_link_libraries(bench_soak_memory PRIVATE develop::bench develop::mem develop::sched develop::log)
+    develop_target_defaults(bench_soak_memory)
+    # 8 seconds by default so it fits a normal test run; set DEVELOP_SOAK_SECONDS=86400 for a real soak.
+    add_test(NAME soak_memory COMMAND ${CMAKE_COMMAND} -E env DEVELOP_SOAK_SECONDS=8 $<TARGET_FILE:bench_soak_memory>)
+    set_tests_properties(soak_memory PROPERTIES LABELS soak TIMEOUT 120)
+endif()

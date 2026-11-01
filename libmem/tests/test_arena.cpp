@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-#include "alloc_counter.hpp"
+#include "bench/alloc_budget.hpp"
 #include "mem/arena.hpp"
 #include "mini_test.hpp"
 

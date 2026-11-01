@@ -16,7 +16,7 @@
 #include <thread>
 #include <vector>
 
-#include "alloc_counter.hpp"
+#include "bench/alloc_budget.hpp"
 #include "lg/logger.hpp"
 #include "mem/size_class_pool.hpp"
 #include "mini_test.hpp"
