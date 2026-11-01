@@ -35,6 +35,10 @@ public:
     // timeout < 0 waits forever. Only one thread may call readLine at a time.
     ReadResult readLine(std::string& out, std::chrono::milliseconds timeout = std::chrono::milliseconds(-1));
 
+    // Reads up to `size` bytes of the child's stdout (blocking up to `timeout`). Returns the byte count, 0 at end of
+    // stream, -1 on timeout, -2 when interrupt() was called. Do not mix with readLine() on the same Process.
+    long readSome(void* buffer, std::size_t size, std::chrono::milliseconds timeout = std::chrono::milliseconds(-1));
+
     // Makes a readLine() running on another thread return Interrupted without closing any descriptor.
     // Sticky: later readLine() calls return Interrupted until the Process is destroyed. Thread-safe.
     void interrupt() noexcept;

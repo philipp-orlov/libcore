@@ -10,7 +10,9 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cerrno>
+#include <cstring>
 #include <thread>
 #include <utility>
 
@@ -183,6 +185,47 @@ Process::ReadResult Process::readLine(std::string& out, std::chrono::millisecond
                 pending_.clear();
                 return ReadResult::Line;  // last line without a newline
             }
+        }
+    }
+}
+
+long Process::readSome(void* buffer, std::size_t size, std::chrono::milliseconds timeout) {
+    if (outFd_ < 0)
+        return 0;
+    if (!pending_.empty()) {   // bytes already pulled in by a readLine()
+        const std::size_t n = std::min(size, pending_.size());
+        std::memcpy(buffer, pending_.data(), n);
+        pending_.erase(0, n);
+        return static_cast<long>(n);
+    }
+    const auto deadline = std::chrono::steady_clock::now() + (timeout.count() < 0 ? std::chrono::hours(24 * 365) : timeout);
+    for (;;) {
+        if (interrupted_.load(std::memory_order_acquire))
+            return -2;
+        int waitMs = -1;
+        if (timeout.count() >= 0) {
+            const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+            if (left.count() <= 0)
+                return -1;
+            waitMs = static_cast<int>(left.count() > 1000000 ? 1000000 : left.count());
+        }
+        pollfd fds[2] = {{outFd_, POLLIN, 0}, {wakeRead_, POLLIN, 0}};
+        const int ready = ::poll(fds, 2, waitMs);
+        if (ready < 0) {
+            if (errno == EINTR)
+                continue;
+            return 0;
+        }
+        if (ready == 0)
+            continue;
+        if (fds[1].revents & POLLIN)
+            return -2;
+        if (fds[0].revents & (POLLIN | POLLHUP | POLLERR)) {
+            const ssize_t n = ::read(outFd_, buffer, size);
+            if (n >= 0)
+                return static_cast<long>(n);
+            if (errno != EINTR && errno != EAGAIN)
+                return 0;
         }
     }
 }
