@@ -7,6 +7,14 @@
 #include "base/status.hpp"
 #include "mini_test.hpp"
 
+TEST(statusOkOnAnInstanceReportsTheRealState) {
+    const base::Status bad(base::Code::Internal, "x");
+    CHECK(!bad.ok());
+    CHECK(base::Status().ok());
+    CHECK(base::Status::success().ok());
+    CHECK(!static_cast<bool>(bad));
+}
+
 TEST(statusIsSmallTrivialAndTruncatesLongMessages) {
     static_assert(sizeof(base::Status) == 96);
     static_assert(std::is_trivially_copyable_v<base::Status>);

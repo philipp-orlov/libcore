@@ -52,8 +52,11 @@ public:
         message_[n] = '\0';
     }
 
-    static Status ok() noexcept { return {}; }
-    bool isOk() const noexcept { return code_ == Code::Ok; }
+    // Named `success`, not `ok`: a static `ok()` would make `status.ok()` compile on an instance and always report
+    // success.
+    static Status success() noexcept { return {}; }
+    bool ok() const noexcept { return code_ == Code::Ok; }
+    bool isOk() const noexcept { return ok(); }
     explicit operator bool() const noexcept { return isOk(); }
     Code code() const noexcept { return code_; }
     // Library-specific value (nosql::ErrorCode, sql::ErrorCode, errno, ...); 0 = none.
