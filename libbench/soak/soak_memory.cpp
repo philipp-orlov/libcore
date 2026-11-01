@@ -49,14 +49,14 @@ int main() {
     so.gauges.push_back({"caching_segment_bytes", [&] { std::lock_guard<std::mutex> g(cachingMu); return caching.stats().segmentBytes; }});
     so.gauges.push_back({"sessions_in_use", [&] { return sessions.stats().blocksInUse; }});
 
-    const bench::SoakResult r = bench::runSoak(so, [&](unsigned t, const volatile bool& stop) -> std::uint64_t {
+    const bench::SoakResult r = bench::runSoak(so, [&](unsigned t, const std::atomic<bool>& stop) -> std::uint64_t {
         std::mt19937_64 rng(1234 + t);
         mem::Arena arena({&pool, 64 << 10, 4});
         std::vector<mem::SizeClassPool::Block> held;
         std::vector<mem::CachingAllocator::Block> cheld;
         std::vector<Session*> sheld;
         std::uint64_t it = 0;
-        while (!stop) {
+        while (!stop.load(std::memory_order_relaxed)) {
             ++it;
             // Slowly drifting size distribution: the workload that makes naive caches grow.
             const std::size_t drift = 1 + (it / 200000) % 7;

@@ -9,7 +9,11 @@ if(DEVELOP_BUILD_TESTS)
     add_executable(bench_soak_memory soak/soak_memory.cpp)
     target_link_libraries(bench_soak_memory PRIVATE develop::bench develop::mem develop::sched develop::log)
     develop_target_defaults(bench_soak_memory)
-    # 8 seconds by default so it fits a normal test run; set DEVELOP_SOAK_SECONDS=86400 for a real soak.
-    add_test(NAME soak_memory COMMAND ${CMAKE_COMMAND} -E env DEVELOP_SOAK_SECONDS=8 $<TARGET_FILE:bench_soak_memory>)
-    set_tests_properties(soak_memory PROPERTIES LABELS soak TIMEOUT 120)
+    # Sanitizers slow the size drift of this workload so much that it never reaches a steady state in a short run, so
+    # the soak is registered for unsanitized builds only. 12 seconds by default; set DEVELOP_SOAK_SECONDS=86400 for a
+    # real one.
+    if(NOT DEVELOP_SANITIZE)
+        add_test(NAME soak_memory COMMAND ${CMAKE_COMMAND} -E env DEVELOP_SOAK_SECONDS=12 $<TARGET_FILE:bench_soak_memory>)
+        set_tests_properties(soak_memory PROPERTIES LABELS soak TIMEOUT 120)
+    endif()
 endif()

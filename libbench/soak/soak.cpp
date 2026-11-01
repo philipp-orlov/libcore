@@ -71,12 +71,12 @@ static void fit(SoakSeries& s, double warmup, double intervalSeconds) {
     s.windowGrowthPercent = s.windowMax[0] > 0 ? (s.windowMax[2] - s.windowMax[0]) / s.windowMax[0] * 100.0 : 0;
 }
 
-SoakResult runSoak(const SoakOptions& o, const std::function<std::uint64_t(unsigned, const volatile bool&)>& work) {
+SoakResult runSoak(const SoakOptions& o, const std::function<std::uint64_t(unsigned, const std::atomic<bool>&)>& work) {
     SoakResult result;
     result.series.push_back({"rss_bytes", {}});
     for (const auto& g : o.gauges)
         result.series.push_back({g.first, {}});
-    volatile bool stop = false;
+    std::atomic<bool> stop{false};
     std::atomic<std::uint64_t> iterations{0};
     std::vector<std::thread> threads;
     const auto start = std::chrono::steady_clock::now();
@@ -88,7 +88,7 @@ SoakResult runSoak(const SoakOptions& o, const std::function<std::uint64_t(unsig
         for (std::size_t i = 0; i < o.gauges.size(); ++i)
             result.series[i + 1].samples.push_back(static_cast<double>(o.gauges[i].second()));
     }
-    stop = true;
+    stop.store(true);
     for (auto& t : threads)
         t.join();
     result.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();

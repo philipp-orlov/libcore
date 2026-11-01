@@ -6,6 +6,7 @@
 // months" must show a slope of about zero; this turns that into a number a test can assert on.
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <functional>
@@ -43,7 +44,7 @@ struct SoakResult {
 };
 
 // `work(threadIndex, stop)` should loop until `stop` becomes true, returning the number of iterations it performed.
-SoakResult runSoak(const SoakOptions& options, const std::function<std::uint64_t(unsigned thread, const volatile bool& stop)>& work);
+SoakResult runSoak(const SoakOptions& options, const std::function<std::uint64_t(unsigned thread, const std::atomic<bool>& stop)>& work);
 
 // Environment override so CI can lengthen the same test: DEVELOP_SOAK_SECONDS.
 std::chrono::seconds soakSeconds(std::chrono::seconds fallback);
