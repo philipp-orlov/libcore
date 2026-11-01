@@ -1,9 +1,11 @@
 // Copyright (c) 2026 Philipp Orlov
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
 #include <cstring>
 #include <string>
 
+#include "base/encoding.hpp"
 #include "base/hash.hpp"
 #include "mini_test.hpp"
 
@@ -51,4 +53,45 @@ TEST(crc32cReportsItsBackend) {
     std::printf("crc32c backend: %s\n", name.c_str());
 }
 
+
+TEST(hashBytes64MatchesLibsqlGoldens) {
+    // Values produced by libsql's original hashBytes before it was lifted.
+    struct G { const char* s; uint64_t h; };
+    const G goldens[] = {{"", 0x8fcdb8f33ae3211full},          {"a", 0x1bee43fa30aa591bull},
+                         {"abc", 0x07d0ad41eb43aac9ull},       {"abcd", 0xad977ea2754b5d08ull},
+                         {"abcdefg", 0x032e83540409888eull},   {"abcdefgh", 0x9ecbe134d48b121cull},
+                         {"hello world, this is a key", 0x2f205e621b72a950ull}};
+    for (const G& g : goldens)
+        CHECK_EQ(base::hashBytes64(g.s, std::strlen(g.s)), g.h);
+}
+
+TEST(sha1KnownVectors) {
+    auto hex = [](const uint8_t* d) { return base::hexEncode(d, 20); };
+    uint8_t out[20];
+    base::Sha1::digest("", 0, out);
+    CHECK_EQ(hex(out), std::string("da39a3ee5e6b4b0d3255bfef95601890afd80709"));
+    base::Sha1::digest("abc", 3, out);
+    CHECK_EQ(hex(out), std::string("a9993e364706816aba3e25717850c26c9cd0d89d"));
+    const std::string two = "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
+    base::Sha1::digest(two.data(), two.size(), out);
+    CHECK_EQ(hex(out), std::string("84983e441c3bd26ebaae4aa1f95129e5e54670f1"));
+    // RFC 6455 section 1.3 example.
+    const std::string key = "dGhlIHNhbXBsZSBub25jZQ==258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+    base::Sha1::digest(key.data(), key.size(), out);
+    CHECK_EQ(base::base64Encode(out, 20), std::string("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="));
+}
+
+TEST(sha1StreamingEqualsOneShot) {
+    const std::string data = tst::blob(1000, 7);
+    uint8_t whole[20];
+    base::Sha1::digest(data.data(), data.size(), whole);
+    for (std::size_t chunk : {1u, 3u, 55u, 56u, 63u, 64u, 65u, 127u, 999u}) {
+        base::Sha1 s;
+        for (std::size_t i = 0; i < data.size(); i += chunk)
+            s.update(data.data() + i, std::min(chunk, data.size() - i));
+        uint8_t got[20];
+        s.finish(got);
+        CHECK(std::memcmp(got, whole, 20) == 0);
+    }
+}
 int main() { return tst::runAll("hash"); }

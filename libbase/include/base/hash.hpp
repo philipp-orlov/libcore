@@ -21,6 +21,27 @@ constexpr uint32_t fnv1a32(std::string_view text) noexcept {
     return hash;
 }
 
+// Fast 64-bit hash for short keys (identifiers, column names, symbols); lifted unchanged from libsql's flat_hash.
+// Not for untrusted input that must resist collision attacks, and not stable across versions: never persist it.
+uint64_t hashBytes64(const void* data, std::size_t size) noexcept;
+
+// SHA-1 (RFC 3174). Kept only because RFC 6455 mandates it for the WebSocket handshake; not for security.
+class Sha1 {
+public:
+    Sha1() noexcept { reset(); }
+    void reset() noexcept;
+    void update(const void* data, std::size_t size) noexcept;
+    void finish(uint8_t out[20]) noexcept;  // the object must be reset() before reuse
+    static void digest(const void* data, std::size_t size, uint8_t out[20]) noexcept;
+
+private:
+    void block(const uint8_t* p) noexcept;
+    uint32_t h_[5];
+    uint8_t buf_[64];
+    uint64_t bytes_;
+    uint32_t fill_;
+};
+
 // CRC32C (Castagnoli) of `size` bytes, continuing from `crc` (the CRC of the preceding bytes, 0 to start).
 // Uses the CPU's CRC instructions (SSE4.2 on x86-64, the ARMv8 CRC extension) when the running CPU has them,
 // decided once at the first call; otherwise a table-driven loop. Results are identical.
