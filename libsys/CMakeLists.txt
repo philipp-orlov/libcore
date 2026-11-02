@@ -1,4 +1,4 @@
-add_library(develop_sys STATIC src/errno.cpp src/vm.cpp src/wait.cpp src/proc.cpp src/cpu.cpp src/process.cpp)
+add_library(develop_sys STATIC src/errno.cpp src/vm.cpp src/wait.cpp src/proc.cpp src/cpu.cpp src/process.cpp src/file.cpp)
 add_library(develop::sys ALIAS develop_sys)
 target_include_directories(develop_sys PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 target_compile_features(develop_sys PUBLIC cxx_std_17)
