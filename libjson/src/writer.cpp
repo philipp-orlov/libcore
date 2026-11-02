@@ -3,6 +3,8 @@
 
 #include "json/writer.hpp"
 
+#include "json/escape.hpp"
+
 #include <charconv>
 #include <cmath>
 #include <cstdio>
@@ -74,30 +76,12 @@ Writer& Writer::endArray() {
 }
 
 void Writer::escaped(std::string_view s) {
-    static const char kHex[] = "0123456789abcdef";
+    struct Sink {
+        Writer& w;
+        void put(const char* p, std::size_t n) noexcept { w.put(std::string_view(p, n)); }
+    } sink{*this};
     put('"');
-    std::size_t run = 0;
-    for (std::size_t i = 0; i < s.size(); ++i) {
-        const unsigned char c = static_cast<unsigned char>(s[i]);
-        if (c >= 0x20 && c != '"' && c != '\\')
-            continue;
-        put(s.substr(run, i - run));
-        run = i + 1;
-        switch (c) {
-            case '"': put("\\\""); break;
-            case '\\': put("\\\\"); break;
-            case '\n': put("\\n"); break;
-            case '\r': put("\\r"); break;
-            case '\t': put("\\t"); break;
-            case '\b': put("\\b"); break;
-            case '\f': put("\\f"); break;
-            default: {
-                const char esc[6] = {'\\', 'u', '0', '0', kHex[c >> 4], kHex[c & 15]};
-                put(std::string_view(esc, 6));
-            }
-        }
-    }
-    put(s.substr(run));
+    escapeTo(sink, s);
     put('"');
 }
 

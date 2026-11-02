@@ -6,8 +6,11 @@
 #include <string>
 
 #include "bench/alloc_budget.hpp"
+#include "json/escape.hpp"
 #include "json/json.hpp"
 #include "json/writer.hpp"
+#include "json/writer.hpp"
+#include "json/escape.hpp"
 #include "mini_test.hpp"
 
 namespace {
@@ -84,6 +87,17 @@ TEST(writingAllocatesNothing) {
         sample(w);
     }
     CHECK_EQ(scope.calls(), 0ull);
+}
+
+TEST(escapeHelpersAgreeWithWriter) {
+    const std::string_view cases[] = {"", "plain", "q\"b\\s", std::string_view("c\0\x01\x1f", 4), "\n\r\t\b\f", "caf\xc3\xa9"};
+    for (auto c : cases) {
+        std::string quoted;
+        json::appendQuoted(quoted, c);
+        CHECK_EQ(quoted.size(), json::escapedSize(c) + 2);
+        const std::string viaWriter = json::toString([&](json::Writer& w) { w.value(c); });
+        CHECK_EQ(quoted, viaWriter);
+    }
 }
 
 int main() { return tst::runAll("json_writer"); }
