@@ -3,6 +3,8 @@
 
 #include "cfg/cfg.hpp"
 
+#include "base/classic_locale.hpp"
+
 #include <charconv>
 #include <cstdlib>
 #include <cstring>
@@ -114,14 +116,15 @@ base::Status Schema::assign(Param& p, std::string_view value) {
             break;
         }
         case Kind::Double: {
-            // from_chars for double is missing on older libstdc++ (GCC < 11): strtod on a bounded copy, C locale only
-            // matters for the decimal point, which strtod takes from LC_NUMERIC -- so reject anything that is not
-            // plain [-+]digits[.digits][e[-+]digits] first.
+            // from_chars for double is missing on older libstdc++ (GCC < 11): strtod on a bounded copy, in the C locale
+            // because it takes the decimal point from LC_NUMERIC. Anything that is not plain
+            // [-+]digits[.digits][e[-+]digits] is rejected first.
             std::string text(value);
             bool ok = !text.empty();
             for (char c : text)
                 if (!(std::isdigit(static_cast<unsigned char>(c)) || c == '.' || c == '-' || c == '+' || c == 'e' || c == 'E'))
                     ok = false;
+            base::ClassicLocale classic;
             char* end = nullptr;
             const double v = ok ? std::strtod(text.c_str(), &end) : 0;
             if (!ok || end != text.c_str() + text.size() || v != v)

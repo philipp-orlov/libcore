@@ -32,8 +32,8 @@
 #endif
 #endif
 
-#if !JSON_FP_CHARCONV && !defined(_WIN32)
-#include <locale.h>
+#if !JSON_FP_CHARCONV
+#include "base/classic_locale.hpp"
 #endif
 
 // GCC's -Wmaybe-uninitialized has a known false-positive pattern with
@@ -346,35 +346,11 @@ struct Writer
 };
 
 #if !JSON_FP_CHARCONV
-// snprintf and strtod follow the thread's locale: run them in the "C" one,
-// whatever the process has set. uselocale only switches a per-thread pointer.
-class ClassicLocale
-{
-public:
-#ifndef _WIN32
-    ClassicLocale() : previous_(c() ? uselocale(c()) : nullptr) {}
-    ~ClassicLocale()
-    {
-        if (previous_)
-            uselocale(previous_);
-    }
-
-private:
-    static locale_t c()
-    {
-        static const locale_t instance = newlocale(LC_ALL_MASK, "C", static_cast<locale_t>(0));
-        return instance;
-    }
-
-    locale_t previous_;
-#endif
-};
-
 // The shortest of 15, 16 and 17 significant digits that reads back as the
 // same double; 17 always does.
 size_t formatDouble(double value, char* buffer, size_t size)
 {
-    ClassicLocale classic;
+    base::ClassicLocale classic;
     int length = 0;
     for (int precision = 15; precision <= 17; ++precision) {
         length = std::snprintf(buffer, size, "%.*g", precision, value);
@@ -390,7 +366,7 @@ bool parseDouble(std::string_view text, double& value)
     char token[130];
     std::memcpy(token, text.data(), text.size());
     token[text.size()] = '\0';
-    ClassicLocale classic;
+    base::ClassicLocale classic;
     char* end = nullptr;
     errno = 0;
     value = std::strtod(token, &end);
