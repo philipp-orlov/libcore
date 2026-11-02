@@ -24,6 +24,8 @@ namespace sched {
 using Task = base::InlineFunction<void(), 48>;
 
 struct ThreadPoolOptions {
+    ThreadPoolOptions() = default;
+    ThreadPoolOptions(unsigned threadCount, std::size_t capacity = 1024) : threads(threadCount), queueCapacity(capacity) {}
     unsigned threads = 0;                      // 0 = sys::cpuTopology().performance
     std::size_t queueCapacity = 1024;          // rounded up to a power of two (at least 2)
     std::chrono::microseconds spin{0};         // poll this long after a task before parking
