@@ -19,11 +19,12 @@ namespace sched {
 
 // Heap of one-shot timers with generation-tagged ids (a stale id never cancels a newer timer in the same slot).
 // Logic moved unchanged from libhttp's TimerQueue; the callback type is an inline (heap-free) function.
-class TimerHeap
+template <class Fn = base::InlineFunction<void(), 48>>
+class BasicTimerHeap
 {
 public:
     using Clock = std::chrono::steady_clock;
-    using Callback = base::InlineFunction<void(), 48>;
+    using Callback = Fn;
 
     static Clock::time_point after(std::chrono::milliseconds delay) noexcept
     {
@@ -36,7 +37,7 @@ public:
         return delay >= maximum ? Clock::time_point::max() : now + delay;
     }
 
-    explicit TimerHeap(size_t capacity)
+    explicit BasicTimerHeap(size_t capacity)
     {
         if (!capacity || capacity > std::numeric_limits<uint32_t>::max())
             throw std::invalid_argument("invalid timer capacity");
@@ -226,5 +227,7 @@ private:
     std::vector<size_t> heap_;
     std::vector<size_t> free_;
 };
+
+using TimerHeap = BasicTimerHeap<>;
 
 }  // namespace sched
