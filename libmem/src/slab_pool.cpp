@@ -94,16 +94,24 @@ struct SlabPool::ThreadCacheAccess {
 };
 
 namespace {
+thread_local bool t_cacheGone = false;   // see below
+}
+
+namespace {
 struct ThreadCache {
     SlabPool::ThreadSlot slots[kSlots];
     ~ThreadCache() {
         std::lock_guard<std::mutex> g(cacheMutex());
+        t_cacheGone = true;
         for (SlabPool::ThreadSlot& s : slots)
             if (s.pool)
                 SlabPool::ThreadCacheAccess::retire(s);
     }
 };
 thread_local ThreadCache t_cache;
+// Set when this thread's cache has been torn down. Other thread-exit destructors (a thread_local holding a pooled
+// buffer, a task object destroyed late) may still release blocks after that; they must not re-bind a slot that
+// nothing would ever retire. Plain bool: constant-initialised, trivially destructible, valid to the end of the thread.
 }  // namespace
 
 SlabPool::SlabPool(const SlabPoolOptions& o)
@@ -232,11 +240,15 @@ void* SlabPool::takeFromCarve(Shard& sh) noexcept {
     return base + std::size_t{s->carved++} * blockBytes_;
 }
 
-void* SlabPool::steal(unsigned self) noexcept {
+void* SlabPool::steal(unsigned self, bool blocking) noexcept {
     for (unsigned k = 1; k < shardCount_; ++k) {
         Shard& other = shards_[(self + k) % shardCount_];
-        std::unique_lock<std::mutex> lock(other.mu, std::try_to_lock);
-        if (!lock.owns_lock() || other.freeCount == 0)
+        std::unique_lock<std::mutex> lock(other.mu, std::defer_lock);
+        if (blocking)
+            lock.lock();
+        else if (!lock.try_lock())
+            continue;
+        if (other.freeCount == 0)
             continue;
         void* first = other.freeHead;
         void* last = first;
@@ -292,7 +304,13 @@ std::size_t SlabPool::refillBatch(void** out, std::size_t want) noexcept {
     std::size_t n = takeBatch(self, out, want);
     if (n)
         return n;
-    if (void* p = steal(self)) {
+    if (void* p = steal(self, false)) {
+        out[0] = p;
+        return 1;
+    }
+    // Before mapping more memory, look properly (waiting for locks) at what other shards have idle: a producer on one
+    // thread and a consumer on another must not make the pool grow because a try_lock lost a race.
+    if (void* p = steal(self, true)) {
         out[0] = p;
         return 1;
     }
@@ -381,6 +399,16 @@ void SlabPool::sampleInUse(ThreadSlot& s) noexcept {
 }
 
 void* SlabPool::tryAcquire() noexcept {
+    if (BASE_UNLIKELY(t_cacheGone)) {   // late in thread teardown: straight to the shared lists, counted globally
+        void* p = nullptr;
+        if (refillBatch(&p, 1) == 0)
+            return nullptr;
+        if (verify_)
+            markAllocated(p);
+        retiredAcquires_.fetch_add(1, std::memory_order_relaxed);
+        retiredInUse_.fetch_add(1, std::memory_order_relaxed);
+        return p;
+    }
     ThreadSlot& s = bind();
     if (s.count == 0) {
         sampleInUse(s);
@@ -407,6 +435,13 @@ bool SlabPool::release(void* p) noexcept {
     else
         std::memset(p, 0xDD, blockBytes_);
 #endif
+    if (BASE_UNLIKELY(t_cacheGone)) {
+        *static_cast<void**>(p) = nullptr;
+        pushToShard(p, p, 1);
+        retiredReleases_.fetch_add(1, std::memory_order_relaxed);
+        retiredInUse_.fetch_sub(1, std::memory_order_relaxed);
+        return true;
+    }
     ThreadSlot& s = bind();
     s.releases.store(s.releases.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
     const unsigned cap = std::max<unsigned>(1, cacheBlocks_);

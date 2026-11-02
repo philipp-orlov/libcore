@@ -82,7 +82,7 @@ private:
     bool registryInsert(Slab* s) noexcept;
     Slab* mapSlab() noexcept;
     void* takeFromCarve(Shard& sh) noexcept;       // sh.mu held
-    void* steal(unsigned self) noexcept;
+    void* steal(unsigned self, bool blocking) noexcept;
     std::size_t takeBatch(unsigned shard, void** out, std::size_t want) noexcept;
     std::size_t refillBatch(void** out, std::size_t want) noexcept;   // free list, carve, steal, then a new slab
     void pushToShard(void* first, void* last, std::size_t count) noexcept;

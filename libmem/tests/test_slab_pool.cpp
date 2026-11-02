@@ -196,4 +196,50 @@ TEST(poolsComeAndGoWhileThreadsKeepStaleCaches) {
     CHECK(true);
 }
 
+TEST(releasesDuringThreadTeardownDoNotRebindTheCache) {
+    // A thread_local whose destructor releases a block runs after (or before) the pool's own thread cache is torn down,
+    // depending on construction order; either order must be safe, and the pool must stay consistent afterwards.
+    SlabPool pool(opts());
+    struct Late {
+        SlabPool* pool;
+        void* block = nullptr;
+        ~Late() { if (block) pool->release(block); }
+    };
+    for (int round = 0; round < 50; ++round) {
+        std::thread([&] {
+            static thread_local Late late{&pool};      // constructed on first use, destroyed in reverse order of construction
+            late.pool = &pool;
+            void* first = pool.tryAcquire();            // creates this thread's cache slot after `late`
+            late.block = pool.tryAcquire();
+            pool.release(first);
+        }).join();
+    }
+    CHECK_EQ(pool.stats().blocksInUse, 0u);
+    CHECK_EQ(pool.stats().misuse, 0u);
+}
+
+TEST(producerAndConsumerOnDifferentThreadsDoNotGrowThePool) {
+    SlabPool pool(opts());
+    constexpr int kBlocks = 20000;
+    std::vector<void*> queue(kBlocks);
+    std::atomic<int> produced{0}, consumed{0};
+    std::thread consumer([&] {
+        for (int i = 0; i < kBlocks; ++i) {
+            while (produced.load(std::memory_order_acquire) <= i) std::this_thread::yield();
+            CHECK(pool.release(queue[i]));
+            consumed.store(i + 1, std::memory_order_release);
+        }
+    });
+    for (int i = 0; i < kBlocks; ++i) {
+        while (i - consumed.load(std::memory_order_acquire) > 200) std::this_thread::yield();   // at most ~200 blocks in flight
+        queue[i] = pool.tryAcquire();
+        CHECK(queue[i] != nullptr);
+        produced.store(i + 1, std::memory_order_release);
+    }
+    consumer.join();
+    // 200 in flight + two threads' magazines + a margin: a few slabs, not one per refill.
+    CHECK(pool.slabCount() <= 4);
+    CHECK_EQ(pool.stats().blocksInUse, 0u);
+}
+
 int main() { return tst::runAll("slab_pool"); }
