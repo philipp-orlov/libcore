@@ -3,6 +3,8 @@
 
 #include <dlfcn.h>
 
+#include <cstdlib>
+
 #include <type_traits>
 #include <string>
 
@@ -79,12 +81,23 @@ private:
 }  // namespace
 
 std::unique_ptr<Driver> makeCudaDriver(std::string* error) {
+    // DEVELOP_CUDART names the library explicitly; otherwise the loader path, then the toolkit's usual homes (a
+    // CUDA install does not always put its lib64 on the loader path). CUDA 13 first: sm_120/121 parts need it.
     void* lib = nullptr;
-    for (const char* name : {"libcudart.so", "libcudart.so.12", "libcudart.so.11.0"})
-        if ((lib = ::dlopen(name, RTLD_NOW | RTLD_LOCAL)))
+    if (const char* forced = std::getenv("DEVELOP_CUDART"); forced && *forced)
+        lib = ::dlopen(forced, RTLD_NOW | RTLD_LOCAL);
+    static const char* const kNames[] = {
+        "libcudart.so", "libcudart.so.13", "libcudart.so.12", "libcudart.so.11.0",
+        "/usr/local/cuda/lib64/libcudart.so", "/usr/local/cuda/targets/sbsa-linux/lib/libcudart.so",
+        "/usr/local/cuda/targets/x86_64-linux/lib/libcudart.so", "/usr/local/cuda/targets/aarch64-linux/lib/libcudart.so",
+    };
+    for (const char* name : kNames) {
+        if (lib)
             break;
+        lib = ::dlopen(name, RTLD_NOW | RTLD_LOCAL);
+    }
     if (!lib) {
-        if (error) *error = "libcudart is not installed";
+        if (error) *error = "libcudart is not installed (set DEVELOP_CUDART to its path)";
         return nullptr;
     }
     auto driver = std::make_unique<Cuda>(lib);
