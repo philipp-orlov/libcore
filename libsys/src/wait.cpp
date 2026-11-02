@@ -48,7 +48,50 @@ void wakeAll(std::atomic<std::uint32_t>& word) noexcept {
     ::syscall(SYS_futex, reinterpret_cast<std::uint32_t*>(&word), FUTEX_WAKE, INT_MAX, nullptr, nullptr, 0);
 }
 
-#else  // Portable fallback until the Windows (WaitOnAddress) and macOS (os_sync_wait_on_address) ports land: poll.
+#elif defined(_WIN32)   // NOT BUILT OR RUN on this machine: WaitOnAddress (Windows 8+, needs Synchronization.lib).
+
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#pragma comment(lib, "Synchronization.lib")
+
+WaitResult waitOnAddress(std::atomic<std::uint32_t>& word, std::uint32_t expected, std::chrono::nanoseconds timeout) noexcept {
+    if (word.load(std::memory_order_acquire) != expected)
+        return WaitResult::Changed;
+    const DWORD ms = timeout.count() < 0 ? INFINITE : static_cast<DWORD>(std::min<std::int64_t>(timeout.count() / 1000000, 0xFFFFFFFELL));
+    std::uint32_t compare = expected;
+    if (::WaitOnAddress(&word, &compare, sizeof compare, ms))
+        return WaitResult::Woken;
+    return ::GetLastError() == ERROR_TIMEOUT ? WaitResult::TimedOut : WaitResult::Woken;
+}
+void wakeOne(std::atomic<std::uint32_t>& word) noexcept { ::WakeByAddressSingle(&word); }
+void wakeAll(std::atomic<std::uint32_t>& word) noexcept { ::WakeByAddressAll(&word); }
+
+#elif defined(__APPLE__)   // NOT BUILT OR RUN on this machine: os_sync_wait_on_address (macOS 14.4+).
+
+#include <os/os_sync_wait_on_address.h>
+
+WaitResult waitOnAddress(std::atomic<std::uint32_t>& word, std::uint32_t expected, std::chrono::nanoseconds timeout) noexcept {
+    if (word.load(std::memory_order_acquire) != expected)
+        return WaitResult::Changed;
+    int rc;
+    if (timeout.count() < 0)
+        rc = os_sync_wait_on_address(&word, expected, sizeof expected, OS_SYNC_WAIT_ON_ADDRESS_SHARED);
+    else
+        rc = os_sync_wait_on_address_with_timeout(&word, expected, sizeof expected, OS_SYNC_WAIT_ON_ADDRESS_SHARED,
+                                                  OS_CLOCK_MACH_ABSOLUTE_TIME, static_cast<std::uint64_t>(timeout.count()));
+    if (rc >= 0)
+        return WaitResult::Woken;
+    return errno == ETIMEDOUT ? WaitResult::TimedOut : WaitResult::Woken;
+}
+void wakeOne(std::atomic<std::uint32_t>& word) noexcept { os_sync_wake_by_address_any(&word, sizeof(std::uint32_t), OS_SYNC_WAKE_BY_ADDRESS_SHARED); }
+void wakeAll(std::atomic<std::uint32_t>& word) noexcept { os_sync_wake_by_address_all(&word, sizeof(std::uint32_t), OS_SYNC_WAKE_BY_ADDRESS_SHARED); }
+
+#else  // Portable fallback: poll.
 
 WaitResult waitOnAddress(std::atomic<std::uint32_t>& word, std::uint32_t expected,
                          std::chrono::nanoseconds timeout) noexcept {

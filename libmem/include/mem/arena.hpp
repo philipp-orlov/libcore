@@ -72,6 +72,7 @@ public:
     std::size_t usedBytes() const noexcept { return used_; }
     std::size_t retainedBytes() const noexcept;   // bytes held in spare chunks
     std::size_t chunkCount() const noexcept { return chunks_ + spareCount_; }
+    std::size_t chunkBytes() const noexcept { return chunkBytes_; }   // standard chunk size, as the pool rounds it
 
     // For std::pmr containers: deallocate is a no-op, memory comes back on reset()/rewind().
     std::pmr::memory_resource* resource() noexcept { return &resource_; }
