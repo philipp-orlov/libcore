@@ -65,7 +65,7 @@ public:
     void releaseIdleLarge() noexcept;               // unmap every idle large block; small slabs stay
     Stats stats() const noexcept;
     // Bytes held by idle large blocks only (the small classes' free blocks are not counted).
-    std::uint64_t idleLargeBytes() const noexcept { return counters_.retainedBytes.load(std::memory_order_relaxed); }
+    std::uint64_t idleLargeBytes() const noexcept { return idleBytes_.load(std::memory_order_relaxed); }
 
     const ClassTable& classes() const noexcept { return table_; }
 
@@ -90,12 +90,32 @@ private:
         std::uint32_t slot = 0;
     };
 
+    // Large blocks are striped. Each thread has a home stripe (round robin, like the shards of the pools this one
+    // replaced); a block is mapped into, and returned to, the stripe of the thread that mapped it, and a lock-free
+    // radix map (64 KiB granules -> stripe) tells release which stripe that is. acquire takes from the home stripe
+    // and only locks another stripe when its idle count for the class is non-zero. Addresses above 48 bits fall back
+    // to a hash of the address.
+    struct alignas(64) LargeStripe {
+        std::mutex mu;
+        LargeEntry* entries = nullptr;
+        IndexEntry* index = nullptr;
+        std::uint32_t* freeSlots = nullptr;   // stack of unused entry slots
+        std::size_t freeSlotCount = 0;
+        std::uint32_t idleHead[ClassTable::kMaxClasses] = {};
+        std::atomic<std::uint32_t> idleCount[ClassTable::kMaxClasses] = {};   // written under mu, read without it
+        Counters counters;                    // acquires / releases / in use / peak of this stripe
+    };
+
     Block acquireLarge(std::size_t cls) noexcept;
     void releaseLarge(Block block) noexcept;
-    std::size_t findLarge(const void* p) const noexcept;    // mu_ held; returns slot or npos
-    std::uint32_t insertLarge(const LargeEntry& e) noexcept;// mu_ held; returns the slot
-    void eraseLarge(std::size_t slot) noexcept;             // mu_ held
-    void ageIdle(std::uint64_t nowNs) noexcept;             // takes mu_, performs syscalls after dropping it
+    std::size_t stripeOf(const void* p) const noexcept;        // stripe that owns a block (radix or hash)
+    std::size_t placeStripe(const void* p) const noexcept;     // stripe for a new mapping by this thread
+    void setOwner(const void* p, std::size_t stripe) noexcept; // radix map write (0 = none)
+    bool popIdle(LargeStripe& st, std::size_t cls, Block& out) noexcept;   // st.mu held
+    std::size_t findLarge(const LargeStripe& st, const void* p) const noexcept;    // st.mu held; slot or npos
+    std::uint32_t insertLarge(LargeStripe& st, const LargeEntry& e) noexcept;      // st.mu held; returns the slot
+    void eraseLarge(LargeStripe& st, std::size_t slot) noexcept;                   // st.mu held
+    void ageIdle(std::uint64_t nowNs) noexcept;             // takes stripe locks, performs syscalls after dropping them
     std::size_t indexHome(const void* p) const noexcept;
 
     PoolOptions options_;
@@ -106,16 +126,17 @@ private:
     void* smallStorage_ = nullptr;
 
     // Large blocks.
-    std::mutex mu_;
-    LargeEntry* entries_ = nullptr;
-    IndexEntry* index_ = nullptr;
-    std::uint32_t* freeSlots_ = nullptr;   // stack of unused entry slots
-    std::size_t freeSlotCount_ = 0, indexMask_ = 0, largeLive_ = 0;
-    std::size_t entriesBytes_ = 0, indexBytes_ = 0, freeSlotsBytes_ = 0;
-    std::uint32_t idleHead_[ClassTable::kMaxClasses] = {};
-    std::size_t idleBytes_ = 0;
-    std::size_t idleCount_[ClassTable::kMaxClasses] = {};
-    std::atomic<std::uint64_t> lastAgeNs_{0};
+    LargeStripe* stripes_ = nullptr;      // off-heap (vmMap), stripeCount_ entries
+    std::atomic<std::atomic<std::uint8_t>*>* radix_ = nullptr;   // [1 << 16] leaves of [1 << 16] stripe+1 bytes
+    std::size_t radixBytes_ = 0, radixTop_ = 0;
+    unsigned radixShift_ = 12;
+    std::size_t stripeCount_ = 1, stripeMask_ = 0, stripeBytes_ = 0;
+    std::size_t entriesPerStripe_ = 0, indexMask_ = 0;
+    std::size_t entriesBytes_ = 0, indexBytes_ = 0, freeSlotsBytes_ = 0;   // per stripe
+    alignas(64) std::atomic<std::size_t> largeLive_{0};
+    std::atomic<std::size_t> idleBytes_{0};                                     // == counters_.retainedBytes
+    std::atomic<std::uint32_t> idleCount_[ClassTable::kMaxClasses] = {};       // all stripes; for maxIdlePerLargeClass
+    alignas(64) std::atomic<std::uint64_t> lastAgeNs_{0};
 
     Counters counters_;
     std::atomic<std::uint64_t> mapped_{0};

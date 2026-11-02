@@ -237,4 +237,72 @@ TEST(steadyStateAllocatesNothingAndMapsNothing) {
     CHECK_EQ(after.unmapCalls, before.unmapCalls);
 }
 
+TEST(largeBlocksReleasedOnOtherThreadsGoHome) {
+    // Producers map large blocks into their home stripes; consumers release them from other threads. Each block is
+    // tagged so a block handed to two owners at once would be caught.
+    g_misuse = 0;
+    PoolOptions o = opts();
+    o.shards = 8;
+    o.maxIdlePerLargeClass = 6;
+    SizeClassPool pool(o);
+    constexpr int kPairs = 3, kItems = 20000, kRing = 64;
+    struct Ring {
+        std::atomic<std::uint64_t> head{0}, tail{0};
+        SizeClassPool::Block slots[kRing];
+    };
+    std::vector<Ring> rings(kPairs);
+    std::atomic<int> bad{0};
+    std::vector<std::thread> ts;
+    for (int p = 0; p < kPairs; ++p) {
+        ts.emplace_back([&, p] {
+            Ring& r = rings[p];
+            for (int i = 0; i < kItems; ++i) {
+                const std::size_t want = (32u << 10) + static_cast<std::size_t>((i * 7919 + p) % (400 << 10));
+                SizeClassPool::Block b = pool.acquire(want);
+                std::memset(b.data, p + 1, 64);
+                while (r.head.load(std::memory_order_acquire) - r.tail.load(std::memory_order_acquire) == kRing)
+                    std::this_thread::yield();
+                r.slots[r.head.load(std::memory_order_relaxed) % kRing] = b;
+                r.head.fetch_add(1, std::memory_order_release);
+            }
+        });
+        ts.emplace_back([&, p] {
+            Ring& r = rings[p];
+            for (int i = 0; i < kItems; ++i) {
+                while (r.tail.load(std::memory_order_acquire) == r.head.load(std::memory_order_acquire))
+                    std::this_thread::yield();
+                SizeClassPool::Block b = r.slots[r.tail.load(std::memory_order_relaxed) % kRing];
+                r.tail.fetch_add(1, std::memory_order_release);
+                const auto* bytes = static_cast<const unsigned char*>(b.data);
+                for (int k = 0; k < 64; ++k)
+                    if (bytes[k] != p + 1)
+                        ++bad;
+                pool.release(b);
+            }
+        });
+    }
+    for (auto& t : ts)
+        t.join();
+    CHECK_EQ(bad.load(), 0);
+    CHECK_EQ(g_misuse.load(), 0);
+    const auto st = pool.stats();
+    CHECK_EQ(st.blocksInUse, 0u);
+    CHECK_EQ(st.acquires, st.releases);
+    CHECK(pool.idleLargeBytes() <= o.retainLargeBytes);
+    pool.releaseIdleLarge();
+    CHECK_EQ(pool.idleLargeBytes(), 0u);
+}
+
+TEST(largeBlockOfAnotherPoolIsMisuse) {
+    g_misuse = 0;
+    SizeClassPool a(opts()), b(opts());
+    SizeClassPool::Block x = a.acquire(1 << 20);
+    b.release(x);                       // b never mapped it
+    CHECK_EQ(g_misuse.load(), 1);
+    a.release(x);
+    CHECK_EQ(g_misuse.load(), 1);
+    a.release(x);                       // double free
+    CHECK_EQ(g_misuse.load(), 2);
+}
+
 int main() { return tst::runAll("size_class_pool"); }
