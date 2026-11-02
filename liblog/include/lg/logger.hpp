@@ -82,7 +82,7 @@ private:
     std::atomic<bool> stopping_{false};
     std::atomic<bool> wakePending_{false};
     std::atomic<std::uint64_t> dropped_{0}, truncated_{0}, consumed_{0};
-    std::atomic<std::uint32_t> wakeWord_{0}, progressWord_{0};
+    std::atomic<std::uint32_t> wakeWord_{0}, progressWord_{0}, started_{0};
 
     mutable std::mutex ringsMu_;
     std::vector<Ring*> rings_;

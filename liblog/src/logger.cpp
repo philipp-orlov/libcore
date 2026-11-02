@@ -127,6 +127,11 @@ Logger::Logger(LoggerOptions options)
         liveGens().push_back(gen_);
     }
     consumer_ = std::thread([this] { consumerLoop(); });
+    // Wait for the consumer's one-time setup (its thread-local batch buffers): after the constructor returns, the
+    // logger allocates only when a new producer thread logs its first line or a sink is added. Without this, a
+    // lazily created logger allocated on another thread at an unpredictable moment.
+    while (started_.load(std::memory_order_acquire) == 0)
+        sys::waitOnAddress(started_, 0u, std::chrono::milliseconds(10));
 }
 
 Logger::~Logger() {
@@ -301,7 +306,7 @@ std::uint64_t Logger::producedLines() const noexcept {
 namespace {
 struct TimePrefix {
     std::time_t second = -1;
-    char text[24] = {};   // "YYYY-MM-DD HH:MM:SS"
+    char text[64] = {};   // "YYYY-MM-DD HH:MM:SS" (sized for any int so the formatter cannot truncate)
     void update(std::time_t sec, bool utc) {
         if (sec == second)
             return;
@@ -354,6 +359,8 @@ bool Logger::drainOnce(bool all) {
         batch.reserve(64 * 1024);
     batch.resize(0);
     static thread_local std::vector<Ring*> snapshot;   // consumer thread only; capacity is reused
+    if (snapshot.capacity() < 64)
+        snapshot.reserve(64);
     {
         std::lock_guard<std::mutex> g(ringsMu_);
         snapshot.assign(rings_.begin(), rings_.end());   // rings are only freed by this thread
@@ -437,6 +444,9 @@ bool Logger::drainOnce(bool all) {
 }
 
 void Logger::consumerLoop() {
+    drainOnce(false);   // reserves the thread-local buffers before anyone is waiting on a line
+    started_.store(1, std::memory_order_release);
+    sys::wakeAll(started_);
     auto lastDropReport = std::chrono::steady_clock::now();
     std::uint64_t reportedDrops = 0;
     for (;;) {

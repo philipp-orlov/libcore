@@ -226,6 +226,17 @@ TEST(producersDoNotAllocateAfterTheirFirstLine) {
     CHECK_EQ(scope.calls(), 0ull);   // counts the consumer thread too
 }
 
+TEST(consumerSetupIsFinishedWhenTheConstructorReturns) {
+    // A logger created lazily (first line of a library) must not allocate later on its consumer thread while the
+    // application measures something: the constructor waits for that thread's one-time setup.
+    for (int round = 0; round < 20; ++round) {
+        lg::Logger log(plain());
+        tst::AllocScope scope;
+        std::this_thread::sleep_for(std::chrono::milliseconds(15));   // several idle polls of the consumer
+        CHECK_EQ(scope.calls(), 0ull);
+    }
+}
+
 TEST(ringsAreReturnedWhenThreadsExit) {
     auto& pool = mem::SizeClassPool::global();
     const auto before = pool.stats().blocksInUse;
