@@ -150,6 +150,7 @@ SizeClassPool::Block SizeClassPool::acquireLarge(std::size_t cls) noexcept {
             e.nextIdle = 0;
             e.inUse = true;
             idleBytes_ -= e.bytes;
+            --idleCount_[cls];
             counters_.retainedBytes.fetch_sub(e.bytes, std::memory_order_relaxed);
             counters_.noteAcquire();
             return {e.ptr, capacity};
@@ -204,13 +205,15 @@ void SizeClassPool::releaseLarge(Block block) noexcept {
             if (options_.scrubOnRelease)
                 std::memset(e.ptr, 0, block.capacity);
             counters_.noteRelease();
-            if (idleBytes_ + e.bytes <= options_.retainLargeBytes) {
+            if (idleBytes_ + e.bytes <= options_.retainLargeBytes &&
+                (options_.maxIdlePerLargeClass == 0 || idleCount_[e.cls] < options_.maxIdlePerLargeClass)) {
                 e.inUse = false;
                 e.discarded = false;
                 e.idleSinceNs = sys::monotonicNs();
                 e.nextIdle = idleHead_[e.cls];
                 idleHead_[e.cls] = static_cast<std::uint32_t>(i + 1);
                 idleBytes_ += e.bytes;
+                ++idleCount_[e.cls];
                 counters_.retainedBytes.fetch_add(e.bytes, std::memory_order_relaxed);
             } else {
                 // Over the retention cap: unmap this block (after the lock is dropped).
@@ -275,6 +278,36 @@ void SizeClassPool::ageIdle(std::uint64_t nowNs) noexcept {
 }
 
 void SizeClassPool::trim() noexcept { ageIdle(~std::uint64_t{0}); }
+
+void SizeClassPool::releaseIdleLarge() noexcept {
+    for (;;) {
+        sys::VmRegion batch[kMaxPending];
+        std::size_t n = 0;
+        {
+            std::lock_guard<std::mutex> g(mu_);
+            for (std::size_t c = firstLargeClass_; c < table_.count() && n < kMaxPending; ++c) {
+                while (idleHead_[c] && n < kMaxPending) {
+                    const std::uint32_t slot = idleHead_[c] - 1;
+                    LargeEntry& e = entries_[slot];
+                    idleHead_[c] = e.nextIdle;
+                    batch[n++] = {e.ptr, e.bytes};
+                    idleBytes_ -= e.bytes;
+                    --idleCount_[c];
+                    counters_.retainedBytes.fetch_sub(e.bytes, std::memory_order_relaxed);
+                    counters_.mappedBytes.fetch_sub(e.bytes, std::memory_order_relaxed);
+                    counters_.unmapCalls.fetch_add(1, std::memory_order_relaxed);
+                    mapped_.fetch_sub(e.bytes, std::memory_order_relaxed);
+                    --largeLive_;
+                    eraseLarge(slot);
+                }
+            }
+        }
+        for (std::size_t i = 0; i < n; ++i)
+            sys::vmUnmap(batch[i]);
+        if (n < kMaxPending)
+            return;
+    }
+}
 
 // ---- public ----
 

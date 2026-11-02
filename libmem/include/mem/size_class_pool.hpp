@@ -33,6 +33,7 @@ struct PoolOptions {
     std::size_t maxLargeBlocks = 4096;                     // live + idle large mappings, hard cap
     std::size_t maxBytes = 0;                              // 0 = unlimited quota on mapped bytes
     std::size_t retainLargeBytes = std::size_t{64} << 20;  // idle large blocks kept mapped
+    std::size_t maxIdlePerLargeClass = 0;                  // 0 = no per-class limit; else idle blocks kept per large class
     std::chrono::milliseconds releaseIdleAfter{250};       // idle large block drops its pages after this
     unsigned borrowClasses = 0;                            // may lend from up to N larger classes when sealed/at quota
     bool verifyBlocks = true;                              // false: skip the per-block double-free/foreign-pointer checks (small classes)
@@ -60,8 +61,11 @@ public:
 
     void prewarm(std::size_t cls, std::size_t blocks) noexcept;
     void seal() noexcept;                           // no new mappings; borrow-or-refuse from now on
-    void trim() noexcept;                           // age out idle large blocks now
+    void trim() noexcept;                           // age out idle large blocks now (pages go back, mappings stay)
+    void releaseIdleLarge() noexcept;               // unmap every idle large block; small slabs stay
     Stats stats() const noexcept;
+    // Bytes held by idle large blocks only (the small classes' free blocks are not counted).
+    std::uint64_t idleLargeBytes() const noexcept { return counters_.retainedBytes.load(std::memory_order_relaxed); }
 
     const ClassTable& classes() const noexcept { return table_; }
 
@@ -110,6 +114,7 @@ private:
     std::size_t entriesBytes_ = 0, indexBytes_ = 0, freeSlotsBytes_ = 0;
     std::uint32_t idleHead_[ClassTable::kMaxClasses] = {};
     std::size_t idleBytes_ = 0;
+    std::size_t idleCount_[ClassTable::kMaxClasses] = {};
     std::atomic<std::uint64_t> lastAgeNs_{0};
 
     Counters counters_;
