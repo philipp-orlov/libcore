@@ -421,11 +421,16 @@ void SizeClassPool::ageIdle(std::uint64_t nowNs) noexcept {
                 sys::vmDiscard(st.entries[taken[k]].ptr, st.entries[taken[k]].bytes);   // exclusively ours while aging
             std::lock_guard<std::mutex> g(st.mu);
             for (std::size_t k = 0; k < count; ++k) {
+                // Cold blocks go to the tail: acquire pops the head, so warm blocks (pages still resident) are
+                // reused first and a cold one is only faulted back in when nothing warm is left.
                 LargeEntry& e = st.entries[taken[k]];
                 e.aging = false;
                 e.discarded = true;
-                e.nextIdle = st.idleHead[e.cls];
-                st.idleHead[e.cls] = taken[k] + 1;
+                e.nextIdle = 0;
+                std::uint32_t* link = &st.idleHead[e.cls];
+                while (*link)
+                    link = &st.entries[*link - 1].nextIdle;
+                *link = taken[k] + 1;
             }
             if (count < kMaxPending)
                 break;
