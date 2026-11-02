@@ -12,7 +12,7 @@ Everything that could be built and tested without a GPU is done and pushed. This
 |---|---|---|---|
 | `philipp-orlov/develop-core` | `main` | see `git log` (handoff files, buildkit fix, libdev CUDA test, …) | the shared components (13 libraries) |
 | `philipp-orlov/cortex` | same | `4035665` | training/inference; CUDA backend |
-| `philipp-orlov/libhttp` | same | `62596b5` | HTTP/WebSocket server |
+| `philipp-orlov/libhttp` | same | `c9efa7d` | HTTP/WebSocket server |
 | `philipp-orlov/libnosql` | same | `613b377` | embedded KV store |
 | `philipp-orlov/libsql` | same | `0307354` | SQL engine |
 | `philipp-orlov/librpc` | same | `cf9b2e6` | RPC |
@@ -22,6 +22,8 @@ Everything that could be built and tested without a GPU is done and pushed. This
 All repositories expect to be **siblings in one directory** (each has a `<REPO>_DEVELOP_CORE_DIR` CMake cache variable defaulting to `../develop-core`, and libsql/librpc/gscope find libhttp, libbufs, libnosql the same way). `handoff.sh` sets that up.
 
 Commit identity everywhere: **Philipp Orlov `<philipp@gotcf.net>`** (the script sets it per repository). Local work branches use the `develop/` prefix; the script creates `develop/gpu`.
+
+**The script itself was tested here** (x86-64, no GPU) against fresh clones of all eight repositories: check ok, fetch ok, core 39/39 (`dev_cuda` skipped), libbufs 22/23 (`bufs_languages`), libhttp 32/32, libnosql 30/30, librpc 9/10 (the `rpc_allocations` fragility below), libsql 29/29, gscope 12/12. That run also found that develop-core could not configure from a clean clone; fixed in `e3ec626`.
 
 ## 1. Before you start (machine prerequisites)
 
@@ -73,7 +75,7 @@ DEVELOP_SOAK_SECONDS=86400 ~/develop/develop-core/handoff/handoff.sh soak
 | core-release | 39/39 (38 + `dev_cuda`) | none |
 | core-gpu | `dev_test_cuda passed on N device(s)`: guard, segments on their device, cross-stream reuse, steady state, pinned pool, peer access matrix printed | `peerAccessWhereAvailable` only prints with one GPU |
 | libbufs | 22/23 | `bufs_languages` needs `esbuild` and `dotnet` |
-| libhttp, libnosql, librpc, libsql, gscope | 32/32, 30/30, 10/10, 29/29, 12/12 | librpc once failed under high `-j` on a 4-core VM (port/timing); rerun with `-j2` |
+| libhttp, libnosql, librpc, libsql, gscope | 32/32, 30/30, 10/10, 29/29, 12/12 | librpc `rpc_allocations` may print "Scan: 1 MiB blob by reference … GROWS": a known warm-up fragility of that test, not a leak (plan §0.1, third-session table, with the fix) |
 | cortex-cpu | all `fast` + `golden` pass | `unit_optim`, `unit_engine` without the model YAMLs; `install_and_examples` expects a tree at `cortex/build` |
 | cortex-cuda | same as cpu **plus** `cortex_cuda_features`, `test_cuda_backend`, `test_cuda_allocator`, `test_cuda_conv` | this is the first run of my cortex CUDA changes (see §3, T1) |
 
@@ -133,7 +135,8 @@ DEVELOP_SOAK_SECONDS=86400 ~/develop/develop-core/handoff/handoff.sh soak
 These are in the plan's "Not yet touched" list; any machine works:
 
 * libhttp `BufferPool`/`SlabPool` onto libmem (needs allocator hooks and pool-outliving leases in libmem first; see the plan, §0.1 Phase 7–8 table).
-* `numtext`, `flat_hash`, `fmt` in libbase; libjson arena tree; libhttp timers on `sched::TimerWheel` (its callbacks exceed the 48-byte inline slot); libhttp's own thread pool → `sched::ThreadPool`.
+* `numtext`, `flat_hash`, `fmt` in libbase; libjson arena tree; libhttp timers on `sched::TimerWheel` (its callbacks exceed the 48-byte inline slot).
+* librpc `rpc_allocations` warm-up: prefault the shared arena before measuring (instructions in the plan).
 * Windows/macOS gaps (`sys::Process` CreateProcess, `SharedMemory`, `cpuTopology`, a kqueue loop).
 * A per-thread magazine for `SizeClassPool` large blocks (removes the last two shared atomics; see the plan's contention row).
 
