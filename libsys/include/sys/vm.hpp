@@ -46,6 +46,11 @@ void vmCommit(void* p, std::size_t bytes);
 // Ask for transparent huge pages on a large region (advice only; no failure if unsupported).
 void vmAdviseHuge(void* p, std::size_t bytes) noexcept;
 
+// Faults every page of [p, p+bytes) in now, so first touches on a hot path cost no page fault and resident memory is
+// flat from the start (shared rings, arenas). Linux 5.14+: MADV_POPULATE_WRITE; otherwise each page is read once
+// (never written), which is safe on memory another thread or process is already using.
+void vmPrefault(void* p, std::size_t bytes) noexcept;
+
 // Pin pages in RAM (mlock). Returns false when the limit is exceeded or unsupported.
 bool vmLock(void* p, std::size_t bytes) noexcept;
 void vmUnlock(void* p, std::size_t bytes) noexcept;

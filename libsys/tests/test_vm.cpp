@@ -8,6 +8,7 @@
 #include "mini_test.hpp"
 #include "sys/errno.hpp"
 #include "sys/proc.hpp"
+#include "sys/shm.hpp"
 #include "sys/vm.hpp"
 
 TEST(mapIsZeroedPageAlignedAndRounded) {
@@ -54,6 +55,18 @@ TEST(discardReturnsPagesToTheOs) {
     CHECK(before >= after + (pages - 64) * page);
     CHECK_EQ(static_cast<unsigned char*>(r.base)[page * 17], 0);  // reads as zero again
     sys::vmUnmap(r);
+}
+
+TEST(prefaultMakesSharedMemoryResident) {
+    // A shared memfd mapping (what rings and arenas use): resident after vmPrefault, before anything writes to it.
+    const std::size_t bytes = std::size_t{8} << 20;
+    sys::SharedMemory shm = sys::SharedMemory::create("prefault-test", bytes);
+    const std::size_t before = sys::residentBytes();
+    sys::vmPrefault(shm.data(), shm.size());
+    const std::size_t after = sys::residentBytes();
+    CHECK(after >= before + bytes - (std::size_t{256} << 10));
+    CHECK_EQ(static_cast<unsigned char*>(shm.data())[12345], 0);   // contents untouched
+    sys::vmPrefault(nullptr, 0);                                    // no-op
 }
 
 TEST(discardNeverTouchesPartialPages) {

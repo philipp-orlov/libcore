@@ -135,6 +135,25 @@ void vmAdviseHuge(void* p, std::size_t bytes) noexcept {
 #endif
 }
 
+void vmPrefault(void* p, std::size_t bytes) noexcept {
+    if (!p || !bytes)
+        return;
+#if defined(__linux__)
+#ifndef MADV_POPULATE_WRITE
+#define MADV_POPULATE_WRITE 23
+#endif
+    const std::uintptr_t page = pageSize();
+    const std::uintptr_t begin = reinterpret_cast<std::uintptr_t>(p) & ~(page - 1);
+    const std::uintptr_t end = reinterpret_cast<std::uintptr_t>(p) + bytes;
+    if (::madvise(reinterpret_cast<void*>(begin), end - begin, MADV_POPULATE_WRITE) == 0)
+        return;
+#endif
+    const auto* bytesIn = static_cast<const volatile unsigned char*>(p);
+    for (std::size_t off = 0; off < bytes; off += pageSize())
+        (void)bytesIn[off];
+    (void)bytesIn[bytes - 1];
+}
+
 bool vmLock(void* p, std::size_t bytes) noexcept { return ::mlock(p, bytes) == 0; }
 void vmUnlock(void* p, std::size_t bytes) noexcept { (void)::munlock(p, bytes); }
 
@@ -201,6 +220,14 @@ void vmCommit(void* p, std::size_t bytes) {
         throw base::Error(base::Code::ResourceExhausted, "VirtualAlloc(commit) failed", static_cast<std::uint32_t>(::GetLastError()));
 }
 void vmAdviseHuge(void*, std::size_t) noexcept {}
+void vmPrefault(void* p, std::size_t bytes) noexcept {
+    if (!p || !bytes)
+        return;
+    const auto* bytesIn = static_cast<const volatile unsigned char*>(p);
+    for (std::size_t off = 0; off < bytes; off += pageSize())
+        (void)bytesIn[off];
+    (void)bytesIn[bytes - 1];
+}
 bool vmLock(void* p, std::size_t bytes) noexcept { return ::VirtualLock(p, bytes) != 0; }
 void vmUnlock(void* p, std::size_t bytes) noexcept { (void)::VirtualUnlock(p, bytes); }
 
