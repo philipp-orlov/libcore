@@ -1,7 +1,7 @@
 # core_require(<name> <tag>): make core::<name> available.
 #
 # While the components live together in libcore this is only needed by repositories outside it. It uses a
-# sibling checkout when -DDEVELOP_LOCAL_ROOT=<dir> points at one, otherwise fetches the pinned tag.
+# sibling checkout when -DCORE_LOCAL_ROOT=<dir> points at one, otherwise fetches the pinned tag.
 include_guard(GLOBAL)
 include(FetchContent)
 

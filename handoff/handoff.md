@@ -127,7 +127,7 @@ CORE_SOAK_SECONDS=86400 ~/develop/libcore/handoff/handoff.sh soak
 
 ### T6. Optional on the GPU machine
 
-* `-DDEVELOP_NET_IO_URING=ON` (libnet's io_uring backend was moved but never built; needs liburing ≥ 2.0 headers): `handoff.sh core` with that flag, then libhttp's tests.
+* `-DCORE_NET_IO_URING=ON` (libnet's io_uring backend was moved but never built; needs liburing ≥ 2.0 headers): `handoff.sh core` with that flag, then libhttp's tests.
 * GCC 9 / C++17 check of libcore (`libcore/.github/workflows/ci.yml` has the job; it has never run).
 
 ## 4. Things that are not done and do not need a GPU

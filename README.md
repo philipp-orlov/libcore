@@ -29,7 +29,7 @@ cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
 
-Sanitizers: `-DDEVELOP_SANITIZE=address,undefined` or `-DDEVELOP_SANITIZE=thread`. A longer soak:
+Sanitizers: `-DCORE_SANITIZE=address,undefined` or `-DCORE_SANITIZE=thread`. A longer soak:
 `CORE_SOAK_SECONDS=86400 build/libbench/bench_soak_memory`.
 
 ## Using it

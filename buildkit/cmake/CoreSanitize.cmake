@@ -1,5 +1,5 @@
 # One spelling of the sanitizer switch for every component:
-#   -DDEVELOP_SANITIZE=address,undefined   (or: thread)
+#   -DCORE_SANITIZE=address,undefined   (or: thread)
 include_guard(GLOBAL)
 set(CORE_SANITIZE "" CACHE STRING "Sanitizers to build with (the value of -fsanitize=), empty for none")
 if(CORE_SANITIZE)

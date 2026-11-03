@@ -169,8 +169,8 @@ stage_core() {
         esac
     fi
     if ((SANITIZERS)); then
-        build_and_test core-asan "$WS/libcore" "$WS/build/core-asan" "" -- -DCMAKE_BUILD_TYPE=RelWithDebInfo -DDEVELOP_SANITIZE=address,undefined
-        build_and_test core-tsan "$WS/libcore" "$WS/build/core-tsan" "" -- -DCMAKE_BUILD_TYPE=RelWithDebInfo -DDEVELOP_SANITIZE=thread
+        build_and_test core-asan "$WS/libcore" "$WS/build/core-asan" "" -- -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCORE_SANITIZE=address,undefined
+        build_and_test core-tsan "$WS/libcore" "$WS/build/core-tsan" "" -- -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCORE_SANITIZE=thread
     fi
 }
 
