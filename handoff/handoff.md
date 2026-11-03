@@ -8,16 +8,16 @@ Everything that could be built and tested without a GPU is done and pushed. This
 
 ## 0. Where everything is
 
-| Repository | Branch | Last commit (this session) | Role |
-|---|---|---|---|
-| `philipp-orlov/libcore` | `main` | see `git log` (handoff files, buildkit fix, libdev CUDA test, …) | the shared components (13 libraries) |
-| `philipp-orlov/cortex` | same | `4035665` | training/inference; CUDA backend |
-| `philipp-orlov/libhttp` | same | `c9efa7d` | HTTP/WebSocket server |
-| `philipp-orlov/libnosql` | same | `613b377` | embedded KV store |
-| `philipp-orlov/libsql` | same | `0307354` | SQL engine |
-| `philipp-orlov/librpc` | same | `916d2c6` | RPC |
-| `philipp-orlov/libbufs` | same | `22256bc` | serialization |
-| `philipp-orlov/gscope` | same | `ec24292` | GPU/system monitor (uses libhw) |
+| Repository | Branch | Role |
+|---|---|---|
+| `philipp-orlov/libcore` | `main` | the shared components (13 libraries) |
+| `philipp-orlov/cortex` | `main` | training/inference; CUDA backend |
+| `philipp-orlov/libhttp` | `main` | HTTP/WebSocket server |
+| `philipp-orlov/libnosql` | `main` | embedded KV store |
+| `philipp-orlov/libsql` | `main` | SQL engine |
+| `philipp-orlov/librpc` | `main` | RPC |
+| `philipp-orlov/libbufs` | `main` | serialization |
+| `philipp-orlov/gscope` | `main` | GPU/system monitor (uses libhw) |
 
 All repositories expect to be **siblings in one directory** (each has a `<REPO>_LIBCORE_DIR` CMake cache variable defaulting to `../libcore`, and libsql/librpc/gscope find libhttp, libbufs, libnosql the same way). `handoff.sh` sets that up.
 
@@ -43,7 +43,7 @@ Commit identity everywhere: **Philipp Orlov `<philipp@gotcf.net>`** (the script 
 ## 2. Step 1 — run the script
 
 ```bash
-git clone -b main git@github.com:philipp-orlov/libcore.git ~/develop/libcore
+git clone git@github.com:philipp-orlov/libcore.git ~/develop/libcore
 ```
 
 ```bash
@@ -141,7 +141,7 @@ These are in the plan's "Not yet touched" list; any machine works:
 
 ## 5. Gotchas found along the way
 
-* **CI has never run** on any of the eight repositories. When it first runs it needs read access to the sibling private repositories (a token in `secrets`), and the libcore checkout step must use branch `main` (or `main` once you merge).
+* **CI** runs on every push in all eight repositories. Each checks out its sibling repositories at `main`, side by side; libcore is public, so the default token reads it. cortex's CI has no model YAMLs (`scripts/fetch_models.sh` needs `UPSTREAM_MODELS_URL`), so the tests that build a model skip there.
 * **libcore's `.gitignore` used to hide `buildkit/`** (`build*/` matched it): a clean clone could not configure until commit "buildkit: track the CMake modules…". If you see `include could not find requested file: DevelopCompiler`, your checkout predates that commit.
 * `libcudart` is loaded with `dlopen`. If `dev_test_cuda` says "libcudart is not installed", set `CORE_CUDART=/usr/local/cuda/lib64/libcudart.so` (or add that directory to `LD_LIBRARY_PATH`).
 * Unified-memory GPUs (GB10, Jetson): cortex defaults to `cudaMalloc` memory (`CX_CUDA_MEMORY=device`); try `CX_CUDA_MEMORY=managed` for host-visible tensors without copies and compare throughput.
