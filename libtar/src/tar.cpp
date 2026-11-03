@@ -495,8 +495,8 @@ void makeHeader(unsigned char* block, std::string_view name, std::string_view pr
     h[156] = type;
     std::memcpy(h + 257, "ustar", 6);   // magic "ustar\0"
     std::memcpy(h + 263, "00", 2);
-    std::memcpy(h + 265, "develop", 7);
-    std::memcpy(h + 297, "develop", 7);
+    std::memcpy(h + 265, "core", 4);
+    std::memcpy(h + 297, "core", 4);
     if (!prefix.empty())
         std::memcpy(h + 345, prefix.data(), std::min<std::size_t>(prefix.size(), 155));
     sealChecksum(block);

@@ -124,6 +124,7 @@ TEST(writerOutputIsReadableByTarAndByUs) {
     CHECK(listing.find(unsplittable + "\n") != std::string::npos);
     CHECK_EQ(run({"tar", "-xOf", path, "a.txt"}), std::string("hello"));
     CHECK_EQ(run({"tar", "-xOf", path, "dir/b.bin"}), std::string(1000, 'x'));
+    CHECK(run({"tar", "-tvf", path}).find(" core/core ") != std::string::npos);   // owner and group names
 
     tar::Reader r(tar::openFileSource(path));
     const auto items = readAll(r);
