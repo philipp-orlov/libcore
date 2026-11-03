@@ -31,7 +31,7 @@ add_subdirectory(libnet)
 add_subdirectory(libbench)
 
 # ---- install and export ------------------------------------------------------------------------------------------
-# `find_package(libcore CONFIG)` then link develop::base, develop::sys, develop::mem, ...
+# `find_package(libcore CONFIG)` then link core::base, core::sys, core::mem, ...
 option(DEVELOP_INSTALL "Install the libraries, headers and CMake package" ${PROJECT_IS_TOP_LEVEL})
 if(DEVELOP_INSTALL)
     include(GNUInstallDirs)
@@ -50,7 +50,7 @@ if(DEVELOP_INSTALL)
     endforeach()
     install(TARGETS ${_develop_targets} EXPORT develop-targets
             ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
-    install(EXPORT develop-targets NAMESPACE develop:: DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/libcore)
+    install(EXPORT develop-targets NAMESPACE core:: DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/libcore)
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/libcoreConfig.cmake"
 "include(CMakeFindDependencyMacro)
 find_dependency(Threads)

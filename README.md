@@ -39,11 +39,11 @@ As a subdirectory (what the seven repositories do, with a sibling checkout):
 ```cmake
 set(DEVELOP_BUILD_TESTS OFF CACHE BOOL "")
 add_subdirectory(../libcore libcore)
-target_link_libraries(mylib PRIVATE develop::mem develop::sys)
+target_link_libraries(mylib PRIVATE core::mem core::sys)
 ```
 
 Or installed: `cmake --install build --prefix /opt/develop`, then `find_package(libcore CONFIG REQUIRED)` and
-link `develop::<component>`.
+link `core::<component>`.
 
 ## Rules
 
