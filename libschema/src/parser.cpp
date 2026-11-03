@@ -526,12 +526,12 @@ private:
                     }
                     expectPunct(")");
                 } else {  // Name(Request):Response
-                    std::string name = first.text;
+                    std::string requestType = first.text;
                     while (isPunct(".")) {
                         advance();
-                        name += "." + expect(Token::Ident, "a name").text;
+                        requestType += "." + expect(Token::Ident, "a name").text;
                     }
-                    m.request = name;
+                    m.request = requestType;
                     expectPunct(")");
                 }
             }
