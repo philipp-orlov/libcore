@@ -68,7 +68,8 @@ static void fit(SoakSeries& s, double warmup, double intervalSeconds) {
         const std::size_t w = std::min<std::size_t>(2, (i - from) * 3 / span);
         s.windowMax[w] = std::max(s.windowMax[w], s.samples[i]);
     }
-    s.windowGrowthPercent = s.windowMax[0] > 0 ? (s.windowMax[2] - s.windowMax[0]) / s.windowMax[0] * 100.0 : 0;
+    const double before = std::max(s.windowMax[0], s.windowMax[1]);
+    s.windowGrowthPercent = before > 0 ? (s.windowMax[2] - before) / before * 100.0 : 0;
 }
 
 SoakResult runSoak(const SoakOptions& o, const std::function<std::uint64_t(unsigned, const std::atomic<bool>&)>& work) {

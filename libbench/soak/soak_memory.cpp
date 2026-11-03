@@ -41,6 +41,18 @@ int main() {
     log.addSink(lg::makeCallbackSink([](lg::Level, const char*, std::size_t) {}));
     std::atomic<std::uint64_t> taskCount{0};
 
+    // Fill the pool's idle large-block cache (retainLargeBytes) with every large size the workload uses before
+    // measuring. The workload releases one large block at a time, so the cache would otherwise take about a minute to
+    // fill, and a short run reads the tail of that as growth of pool_mapped_bytes.
+    {
+        std::vector<mem::SizeClassPool::Block> large;
+        for (std::size_t mib = 1; mib <= 16; ++mib)
+            if (auto b = pool.tryAcquire(mib << 20); b.data)
+                large.push_back(b);
+        for (auto& b : large)
+            pool.release(b);
+    }
+
     bench::SoakOptions so;
     so.duration = bench::soakSeconds(std::chrono::seconds(20));
     so.threads = 4;

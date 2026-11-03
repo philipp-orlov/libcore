@@ -29,10 +29,12 @@ struct SoakSeries {
     std::vector<double> samples;           // one per interval
     double slopePerMinute = 0;             // least squares over the post-warm-up samples, in the gauge's unit per minute
     double first = 0, last = 0, peak = 0;  // post-warm-up
-    // The post-warm-up samples are cut into three equal windows. A gauge that merely swings (a cache following a
-    // drifting working set) has the same maximum in each window; one that leaks has a larger maximum in each.
+    // The post-warm-up samples are cut into three equal windows. A gauge that leaks sets a new maximum in the last
+    // window, above everything before it. One that merely swings (a cache following a drifting working set, brief
+    // spikes of large blocks) has window maxima that scatter by ±15 % in a short run, so the last window is compared
+    // with the maximum of the first two, not with the first alone: a bounded gauge seldom beats a sample twice as long.
     double windowMax[3] = {0, 0, 0};
-    double windowGrowthPercent = 0;        // (windowMax[2] - windowMax[0]) / windowMax[0] * 100
+    double windowGrowthPercent = 0;        // (windowMax[2] - max(windowMax[0], windowMax[1])) / that maximum * 100
 };
 
 struct SoakResult {
