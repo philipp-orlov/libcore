@@ -29,7 +29,7 @@ jobs:
       - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCORE_SANITIZE=thread
       - run: cmake --build build -j
       - run: ctest --test-dir build --output-on-failure -j2
-  gcc9-c++17:
+  gcc9-cxx17:
     # The oldest toolchain the components must build with (JetPack 5 ships GCC 9).
     runs-on: ubuntu-22.04
     steps:
