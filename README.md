@@ -1,25 +1,34 @@
 # libcore
 
-The shared components of the seven libraries (libsql, librpc, libnosql, libhttp, libbufs, cortex, gscope), kept in one
-repository until they are stable enough to split. Each directory is self-contained, depends only on the ones before it
-in this list, and builds as C++17 (cortex is C++20 and uses these as they are).
+libcore is the shared foundation under a family of related projects: libsql, librpc, libnosql, libhttp, libbufs, cortex, and gscope.
 
-| Component | What it is |
+Each component is self-contained and depends only on the components listed before it. Everything builds as C++17, except cortex, which is C++20 and uses these components unchanged.
+
+## What's inside
+
+| Component | What it does |
 |---|---|
-| `buildkit` | CMake modules (warnings, one `CORE_SANITIZE` switch), `scripts/check_no_dups.sh` |
-| `libbase` | status/`Result`/`Error`, `Span`/`Slice`, xxh3, FNV-1a, CRC32C (SSE4.2/ARMv8 dispatch), SHA-1, base64/hex, UTF-8, `InlineFunction` |
-| `libsys` | OS layer: virtual memory, futex wait, CPU topology, `Process` (no shell), files + mappings + durability, sockets, sealed shared memory |
-| `libmem` | `SlabPool`, `SizeClassPool`, `Arena`, `ObjectPool`, `RegisteredPool`, `PageClassAllocator`, `CachingAllocator` |
-| `libsched` | `ThreadPool`, `parallelFor`, `TimerHeap`, `TimerWheel`, `TaskQueue` |
-| `liblog` | asynchronous logger with per-thread rings and console/file/syslog/callback sinks |
-| `libjson` | `Json` value + parser, allocation-free `Writer` |
-| `libtar` | hardened ustar/pax/GNU reader and writer, shell-free process source |
-| `libschema` | the `.bufs` front end (parser, checker, model) |
-| `libcfg` | typed parameters from argv, environment, URL query |
-| `libhw` | hardware probe, metrics providers (tegrastats, NVML, nvidia-smi, `/proc`), allocation-light `/proc` samplers |
-| `libdev` | device/stream/event/allocator layer over a `Driver` (host simulator, CUDA runtime via `dlopen`) |
-| `libnet` | reactor loops (epoll, io_uring, IOCP), `TcpListener`, `TcpConnection` |
-| `libbench` | `AllocScope` (counts `operator new`), `runSoak` |
+| `libbase` | Status and `Result` types, span/slice views, hashes and checksums (xxh3, FNV-1a, CRC32C, SHA-1), base64/hex, UTF-8 |
+| `libsys` | OS layer: virtual memory, futex waits, CPU topology, processes without a shell, files and durability, sockets, shared memory |
+| `libmem` | Memory allocators: slab, size-class, arena, object pools, and a caching allocator |
+| `libsched` | Thread pool, `parallelFor`, timer heap and wheel, task queue |
+| `liblog` | Asynchronous logger with per-thread rings and console, file, syslog, and callback sinks |
+| `libjson` | JSON value type, parser, and an allocation-free writer |
+| `libtar` | Hardened tar reader and writer (ustar, pax, GNU) |
+| `libschema` | Front end for the `.bufs` schema language: parser, checker, model |
+| `libcfg` | Typed parameters from command line, environment, and URL query |
+| `libhw` | Hardware probing and metrics (tegrastats, NVML, nvidia-smi, `/proc`) |
+| `libdev` | Device, stream, event, and allocator layer over a driver: a host simulator, or CUDA loaded at runtime |
+| `libnet` | Reactor loops (epoll, io_uring, IOCP), TCP listener and connection |
+| `libbench` | Benchmark helpers: allocation counting and soak runs |
+| `buildkit` | CMake modules, warning flags, and a sanitizer switch |
+
+## Guarantees
+
+- Steady-state paths don't allocate from the process heap. Each component that claims this has a test that checks it.
+- Every component is tested under AddressSanitizer, UndefinedBehaviorSanitizer, and ThreadSanitizer.
+- Windows and macOS code paths that haven't been built and run are marked as such in the migration plan. Don't rely on them yet.
+- No component depends on a logger. They report through hooks such as `hw::setWarnHook` and `net::setLogHook`.
 
 ## Building
 
@@ -29,12 +38,11 @@ cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
 
-Sanitizers: `-DCORE_SANITIZE=address,undefined` or `-DCORE_SANITIZE=thread`. A longer soak:
-`CORE_SOAK_SECONDS=86400 build/libbench/bench_soak_memory`.
+Sanitizers: `-DCORE_SANITIZE=address,undefined` or `-DCORE_SANITIZE=thread`. For a longer memory soak test: `CORE_SOAK_SECONDS=86400 build/libbench/bench_soak_memory`.
 
 ## Using it
 
-As a subdirectory (what the seven repositories do, with a sibling checkout):
+As a subdirectory, with a sibling checkout:
 
 ```cmake
 set(CORE_BUILD_TESTS OFF CACHE BOOL "")
@@ -42,12 +50,10 @@ add_subdirectory(../libcore libcore)
 target_link_libraries(mylib PRIVATE core::mem core::sys)
 ```
 
-Or installed: `cmake --install build --prefix /opt/develop`, then `find_package(libcore CONFIG REQUIRED)` and
-link `core::<component>`.
+Or installed system-wide:
 
-## Rules
+```bash
+cmake --install build --prefix /opt/develop
+```
 
-* Steady-state paths allocate nothing from the process heap. A component that claims this has an `AllocScope` test.
-* Every component has tests that run under ASan+UBSan and TSan.
-* Windows and macOS branches that were not built and run are marked as such in the migration plan; do not trust them.
-* No component depends on a logger: they report through a hook (`hw::setWarnHook`, `net::setLogHook`).
+Then in your project: `find_package(libcore CONFIG REQUIRED)` and link `core::<component>`.
