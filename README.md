@@ -6,7 +6,7 @@ in this list, and builds as C++17 (cortex is C++20 and uses these as they are).
 
 | Component | What it is |
 |---|---|
-| `buildkit` | CMake modules (warnings, one `DEVELOP_SANITIZE` switch), `scripts/check_no_dups.sh` |
+| `buildkit` | CMake modules (warnings, one `CORE_SANITIZE` switch), `scripts/check_no_dups.sh` |
 | `libbase` | status/`Result`/`Error`, `Span`/`Slice`, xxh3, FNV-1a, CRC32C (SSE4.2/ARMv8 dispatch), SHA-1, base64/hex, UTF-8, `InlineFunction` |
 | `libsys` | OS layer: virtual memory, futex wait, CPU topology, `Process` (no shell), files + mappings + durability, sockets, sealed shared memory |
 | `libmem` | `SlabPool`, `SizeClassPool`, `Arena`, `ObjectPool`, `RegisteredPool`, `PageClassAllocator`, `CachingAllocator` |
@@ -30,14 +30,14 @@ ctest --test-dir build --output-on-failure
 ```
 
 Sanitizers: `-DDEVELOP_SANITIZE=address,undefined` or `-DDEVELOP_SANITIZE=thread`. A longer soak:
-`DEVELOP_SOAK_SECONDS=86400 build/libbench/bench_soak_memory`.
+`CORE_SOAK_SECONDS=86400 build/libbench/bench_soak_memory`.
 
 ## Using it
 
 As a subdirectory (what the seven repositories do, with a sibling checkout):
 
 ```cmake
-set(DEVELOP_BUILD_TESTS OFF CACHE BOOL "")
+set(CORE_BUILD_TESTS OFF CACHE BOOL "")
 add_subdirectory(../libcore libcore)
 target_link_libraries(mylib PRIVATE core::mem core::sys)
 ```

@@ -9,7 +9,7 @@
 #   ./handoff.sh                 # check, fetch, core, consumers, cortex, report
 #   ./handoff.sh check           # prerequisites only
 #   ./handoff.sh fetch core      # any subset of stages, in the order given
-#   ./handoff.sh soak            # long allocation soak (DEVELOP_SOAK_SECONDS, default 600)
+#   ./handoff.sh soak            # long allocation soak (CORE_SOAK_SECONDS, default 600)
 #
 # Environment (all optional):
 #   WS            workspace directory holding the checkouts       (default: $HOME/develop)
@@ -21,7 +21,7 @@
 #   SANITIZERS=1  also build/test libcore under ASan+UBSan and TSan
 #   CUDA_ARCH     CMAKE_CUDA_ARCHITECTURES for cortex             (default: detected with nvidia-smi)
 #   GOLDEN=1      also run cortex's golden tests                  (default: 1)
-#   DEVELOP_SOAK_SECONDS  length of the soak stage                (default: 600)
+#   CORE_SOAK_SECONDS  length of the soak stage                (default: 600)
 #
 # Nothing here pushes. Every stage logs to $WS/handoff-results/<stage>.log; a failing stage does not stop the next.
 
@@ -230,11 +230,11 @@ stage_cortex() {
 
 # ----------------------------------------------------------------------------------------------------------------- soak
 stage_soak() {
-    local seconds="${DEVELOP_SOAK_SECONDS:-600}"
+    local seconds="${CORE_SOAK_SECONDS:-600}"
     info "Allocation soak, ${seconds}s"
     local bin="$WS/build/core-release/libbench/bench_soak_memory"
     [[ -x "$bin" ]] || build_and_test core-release "$WS/libcore" "$WS/build/core-release" "-R none" -- -DCMAKE_BUILD_TYPE=Release
-    if DEVELOP_SOAK_SECONDS="$seconds" "$bin" >"$RESULTS/soak.log" 2>&1; then
+    if CORE_SOAK_SECONDS="$seconds" "$bin" >"$RESULTS/soak.log" 2>&1; then
         record soak ok "$(tail -1 "$RESULTS/soak.log")"
     else
         record soak FAIL "see $RESULTS/soak.log"

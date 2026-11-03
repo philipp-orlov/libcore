@@ -81,10 +81,10 @@ private:
 }  // namespace
 
 std::unique_ptr<Driver> makeCudaDriver(std::string* error) {
-    // DEVELOP_CUDART names the library explicitly; otherwise the loader path, then the toolkit's usual homes (a
+    // CORE_CUDART names the library explicitly; otherwise the loader path, then the toolkit's usual homes (a
     // CUDA install does not always put its lib64 on the loader path). CUDA 13 first: sm_120/121 parts need it.
     void* lib = nullptr;
-    if (const char* forced = std::getenv("DEVELOP_CUDART"); forced && *forced)
+    if (const char* forced = std::getenv("CORE_CUDART"); forced && *forced)
         lib = ::dlopen(forced, RTLD_NOW | RTLD_LOCAL);
     static const char* const kNames[] = {
         "libcudart.so", "libcudart.so.13", "libcudart.so.12", "libcudart.so.11.0",
@@ -97,7 +97,7 @@ std::unique_ptr<Driver> makeCudaDriver(std::string* error) {
         lib = ::dlopen(name, RTLD_NOW | RTLD_LOCAL);
     }
     if (!lib) {
-        if (error) *error = "libcudart is not installed (set DEVELOP_CUDART to its path)";
+        if (error) *error = "libcudart is not installed (set CORE_CUDART to its path)";
         return nullptr;
     }
     auto driver = std::make_unique<Cuda>(lib);

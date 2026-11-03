@@ -63,7 +63,7 @@ SANITIZERS=1 ~/develop/libcore/handoff/handoff.sh core
 ```
 
 ```bash
-DEVELOP_SOAK_SECONDS=86400 ~/develop/libcore/handoff/handoff.sh soak
+CORE_SOAK_SECONDS=86400 ~/develop/libcore/handoff/handoff.sh soak
 ```
 
 **Output:** `~/develop/handoff-results/summary.md` (one table + the failing tests' output) and one log per stage. Paste `summary.md` back into the next session; it is written to be enough to continue from.
@@ -121,7 +121,7 @@ DEVELOP_SOAK_SECONDS=86400 ~/develop/libcore/handoff/handoff.sh soak
 ### T5. Measure (needed before calling Phase 6 done)
 
 1. cortex benchmarks before/after T2–T4 (`-DCORTEX_BUILD_BENCH=ON`; the plan's rule: > 2 % regression blocks).
-2. `DEVELOP_SOAK_SECONDS=86400 handoff.sh soak` on the target machine: window maxima of RSS and pool gauges must stay within +2 %.
+2. `CORE_SOAK_SECONDS=86400 handoff.sh soak` on the target machine: window maxima of RSS and pool gauges must stay within +2 %.
 3. A 24-hour training soak with `nvidia-smi` memory logging; flat after warm-up.
 4. gscope on the GPU machine: `gscope --port 8080`, open `/health` and the metrics endpoints; the NVML provider (dlopen `libnvidia-ml.so.1`) and `nvidia-smi` fallback are running live for the first time. On Jetson: the tegrastats provider.
 
@@ -143,7 +143,7 @@ These are in the plan's "Not yet touched" list; any machine works:
 
 * **CI has never run** on any of the eight repositories. When it first runs it needs read access to the sibling private repositories (a token in `secrets`), and the libcore checkout step must use branch `main` (or `main` once you merge).
 * **libcore's `.gitignore` used to hide `buildkit/`** (`build*/` matched it): a clean clone could not configure until commit "buildkit: track the CMake modules…". If you see `include could not find requested file: DevelopCompiler`, your checkout predates that commit.
-* `libcudart` is loaded with `dlopen`. If `dev_test_cuda` says "libcudart is not installed", set `DEVELOP_CUDART=/usr/local/cuda/lib64/libcudart.so` (or add that directory to `LD_LIBRARY_PATH`).
+* `libcudart` is loaded with `dlopen`. If `dev_test_cuda` says "libcudart is not installed", set `CORE_CUDART=/usr/local/cuda/lib64/libcudart.so` (or add that directory to `LD_LIBRARY_PATH`).
 * Unified-memory GPUs (GB10, Jetson): cortex defaults to `cudaMalloc` memory (`CX_CUDA_MEMORY=device`); try `CX_CUDA_MEMORY=managed` for host-visible tensors without copies and compare throughput.
 * librpc commit `0798f1a` carries tool-attribution trailers the environment added; rewrite it if you want (`git commit --amend` + `git push --force-with-lease`), the environment refused force-pushes.
 * Pushing from the GPU machine: `git push origin develop/gpu:<branch-you-want>`; the script never pushes.

@@ -46,7 +46,7 @@ struct SoakResult {
 // `work(threadIndex, stop)` should loop until `stop` becomes true, returning the number of iterations it performed.
 SoakResult runSoak(const SoakOptions& options, const std::function<std::uint64_t(unsigned thread, const std::atomic<bool>& stop)>& work);
 
-// Environment override so CI can lengthen the same test: DEVELOP_SOAK_SECONDS.
+// Environment override so CI can lengthen the same test: CORE_SOAK_SECONDS.
 std::chrono::seconds soakSeconds(std::chrono::seconds fallback);
 
 }  // namespace bench

@@ -37,7 +37,7 @@ std::string SoakResult::report() const {
 }
 
 std::chrono::seconds soakSeconds(std::chrono::seconds fallback) {
-    if (const char* v = std::getenv("DEVELOP_SOAK_SECONDS")) {
+    if (const char* v = std::getenv("CORE_SOAK_SECONDS")) {
         const long n = std::strtol(v, nullptr, 10);
         if (n > 0)
             return std::chrono::seconds(n);
