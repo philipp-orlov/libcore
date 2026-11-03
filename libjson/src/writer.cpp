@@ -8,6 +8,7 @@
 #include <charconv>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 namespace json {
@@ -127,8 +128,15 @@ Writer& Writer::value(double v) {
     const auto r = std::to_chars(tmp, tmp + sizeof tmp, v);   // shortest round-trip, locale independent
     std::size_t n = static_cast<std::size_t>(r.ptr - tmp);
 #else
-    // Older libstdc++ has no floating-point to_chars: %.17g, then undo a locale's decimal comma.
-    int n0 = std::snprintf(tmp, sizeof tmp, "%.17g", v);
+    // Older libstdc++ (gcc 9, 10) has no floating-point to_chars: the fewest %g digits that read back as the same
+    // double, as to_chars would choose (5e-324, not %.17g's 4.9406564584124654e-324), then undo a locale's decimal
+    // comma. snprintf and strtod agree on the locale, and neither allocates.
+    int n0 = 0;
+    for (int digits = 1; digits <= 17; ++digits) {
+        n0 = std::snprintf(tmp, sizeof tmp, "%.*g", digits, v);
+        if (std::strtod(tmp, nullptr) == v)
+            break;
+    }
     std::size_t n = static_cast<std::size_t>(n0);
     for (std::size_t i = 0; i < n; ++i)
         if (tmp[i] == ',') tmp[i] = '.';
