@@ -10,7 +10,7 @@ Everything that could be built and tested without a GPU is done and pushed. This
 
 | Repository | Branch | Last commit (this session) | Role |
 |---|---|---|---|
-| `philipp-orlov/develop-core` | `main` | see `git log` (handoff files, buildkit fix, libdev CUDA test, …) | the shared components (13 libraries) |
+| `philipp-orlov/libcore` | `main` | see `git log` (handoff files, buildkit fix, libdev CUDA test, …) | the shared components (13 libraries) |
 | `philipp-orlov/cortex` | same | `4035665` | training/inference; CUDA backend |
 | `philipp-orlov/libhttp` | same | `c9efa7d` | HTTP/WebSocket server |
 | `philipp-orlov/libnosql` | same | `613b377` | embedded KV store |
@@ -19,11 +19,11 @@ Everything that could be built and tested without a GPU is done and pushed. This
 | `philipp-orlov/libbufs` | same | `22256bc` | serialization |
 | `philipp-orlov/gscope` | same | `ec24292` | GPU/system monitor (uses libhw) |
 
-All repositories expect to be **siblings in one directory** (each has a `<REPO>_DEVELOP_CORE_DIR` CMake cache variable defaulting to `../develop-core`, and libsql/librpc/gscope find libhttp, libbufs, libnosql the same way). `handoff.sh` sets that up.
+All repositories expect to be **siblings in one directory** (each has a `<REPO>_LIBCORE_DIR` CMake cache variable defaulting to `../libcore`, and libsql/librpc/gscope find libhttp, libbufs, libnosql the same way). `handoff.sh` sets that up.
 
 Commit identity everywhere: **Philipp Orlov `<philipp@gotcf.net>`** (the script sets it per repository). Local work branches use the `develop/` prefix; the script creates `develop/gpu`.
 
-**The script itself was tested here** (x86-64, no GPU) against fresh clones of all eight repositories: check ok, fetch ok, core 39/39 (`dev_cuda` skipped), libbufs 22/23 (`bufs_languages`), libhttp 32/32, libnosql 30/30, librpc 9/10 (an `rpc_allocations` RSS flake, since fixed: the transport rings are prefaulted), libsql 29/29, gscope 12/12. That run also found that develop-core could not configure from a clean clone; fixed in `e3ec626`.
+**The script itself was tested here** (x86-64, no GPU) against fresh clones of all eight repositories: check ok, fetch ok, core 39/39 (`dev_cuda` skipped), libbufs 22/23 (`bufs_languages`), libhttp 32/32, libnosql 30/30, librpc 9/10 (an `rpc_allocations` RSS flake, since fixed: the transport rings are prefaulted), libsql 29/29, gscope 12/12. That run also found that libcore could not configure from a clean clone; fixed in `e3ec626`.
 
 ## 1. Before you start (machine prerequisites)
 
@@ -38,32 +38,32 @@ Commit identity everywhere: **Philipp Orlov `<philipp@gotcf.net>`** (the script 
 | Python 3 + numpy + OpenCV + Pillow (optional) | regenerating golden images (`cortex/tools/py/*.py`) | `python3 -c "import cv2, numpy, PIL"` |
 | `cortex/scripts/upstream.env` (optional) | `scripts/fetch_models.sh` downloads `configs/models/*.yaml`; without them `unit_optim` and `unit_engine` fail | copy `scripts/upstream.env.example`, set `UPSTREAM_MODELS_URL` |
 
-**If the GPU machine is aarch64 (GB10 / DGX Spark, Jetson, Grace):** this is the **first build of develop-core on ARM**. Code paths that were written but never compiled: `base::crc32c` ARMv8 CRC path (`libbase/src/crc32c.cpp`, `getauxval(AT_HWCAP)` + `target("arch=armv8-a+crc")`), `sys::cpuFeatures()` ARM branch (`libsys/src/cpu.cpp`), libhw's Jetson/tegrastats detection. Watch the `core-release` results for `base_hash` and `sys_cpu` first.
+**If the GPU machine is aarch64 (GB10 / DGX Spark, Jetson, Grace):** this is the **first build of libcore on ARM**. Code paths that were written but never compiled: `base::crc32c` ARMv8 CRC path (`libbase/src/crc32c.cpp`, `getauxval(AT_HWCAP)` + `target("arch=armv8-a+crc")`), `sys::cpuFeatures()` ARM branch (`libsys/src/cpu.cpp`), libhw's Jetson/tegrastats detection. Watch the `core-release` results for `base_hash` and `sys_cpu` first.
 
 ## 2. Step 1 — run the script
 
 ```bash
-git clone -b main git@github.com:philipp-orlov/develop-core.git ~/develop/develop-core
+git clone -b main git@github.com:philipp-orlov/libcore.git ~/develop/libcore
 ```
 
 ```bash
-~/develop/develop-core/handoff/handoff.sh
+~/develop/libcore/handoff/handoff.sh
 ```
 
-That runs, in order: `check` (tools, GPUs, `nvidia-smi topo -m`), `fetch` (clone/fast-forward all eight, create `develop/gpu`; never resets local work), `core` (develop-core Release + the GPU-only `dev_cuda` test), `consumers` (libbufs, libhttp, libnosql, librpc, libsql, gscope), `cortex` (CPU build with `-L fast|golden`, then the CUDA build with the detected architecture and the same labels, plus verbose output of `cortex_cuda_features` and the backend parity binary), and `report`.
+That runs, in order: `check` (tools, GPUs, `nvidia-smi topo -m`), `fetch` (clone/fast-forward all eight, create `develop/gpu`; never resets local work), `core` (libcore Release + the GPU-only `dev_cuda` test), `consumers` (libbufs, libhttp, libnosql, librpc, libsql, gscope), `cortex` (CPU build with `-L fast|golden`, then the CUDA build with the detected architecture and the same labels, plus verbose output of `cortex_cuda_features` and the backend parity binary), and `report`.
 
 Useful variants:
 
 ```bash
-SANITIZERS=1 ~/develop/develop-core/handoff/handoff.sh core
+SANITIZERS=1 ~/develop/libcore/handoff/handoff.sh core
 ```
 
 ```bash
-~/develop/develop-core/handoff/handoff.sh cortex report
+~/develop/libcore/handoff/handoff.sh cortex report
 ```
 
 ```bash
-DEVELOP_SOAK_SECONDS=86400 ~/develop/develop-core/handoff/handoff.sh soak
+DEVELOP_SOAK_SECONDS=86400 ~/develop/libcore/handoff/handoff.sh soak
 ```
 
 **Output:** `~/develop/handoff-results/summary.md` (one table + the failing tests' output) and one log per stage. Paste `summary.md` back into the next session; it is written to be enough to continue from.
@@ -83,7 +83,7 @@ DEVELOP_SOAK_SECONDS=86400 ~/develop/develop-core/handoff/handoff.sh soak
 
 ### T1. Verify what was written blind (do first; small)
 
-*Where:* cortex `src/backend/cuda/cuda_allocator.cpp` (BUG-H7, H8 from commit `cc914ff`), `src/backend/cuda/cuda_backend.cpp:244–251` (L8 `CX_CUDA_DEVICE` parsing, `3f086e4`), develop-core `libdev/src/cuda_driver.cpp`.
+*Where:* cortex `src/backend/cuda/cuda_allocator.cpp` (BUG-H7, H8 from commit `cc914ff`), `src/backend/cuda/cuda_backend.cpp:244–251` (L8 `CX_CUDA_DEVICE` parsing, `3f086e4`), libcore `libdev/src/cuda_driver.cpp`.
 *What:* these compile for the first time on your machine.
 *How:* the `cortex-cuda` stage builds and runs `tests/backend_parity/test_cuda_allocator.cpp` (rounding classes, cache accounting: `cachedBytes` never underflows after `emptyCache`, retention cap from `CX_CACHE_LIMIT_MB`). Then by hand: `CX_CUDA_DEVICE=abc build/cortex-cuda/apps/cortex …` must fail with "is not a device index"; `CX_CUDA_DEVICE=0` must work.
 *Done when:* cortex-cuda passes, and `dev_test_cuda` passes.
@@ -128,7 +128,7 @@ DEVELOP_SOAK_SECONDS=86400 ~/develop/develop-core/handoff/handoff.sh soak
 ### T6. Optional on the GPU machine
 
 * `-DDEVELOP_NET_IO_URING=ON` (libnet's io_uring backend was moved but never built; needs liburing ≥ 2.0 headers): `handoff.sh core` with that flag, then libhttp's tests.
-* GCC 9 / C++17 check of develop-core (`develop-core/.github/workflows/ci.yml` has the job; it has never run).
+* GCC 9 / C++17 check of libcore (`libcore/.github/workflows/ci.yml` has the job; it has never run).
 
 ## 4. Things that are not done and do not need a GPU
 
@@ -141,8 +141,8 @@ These are in the plan's "Not yet touched" list; any machine works:
 
 ## 5. Gotchas found along the way
 
-* **CI has never run** on any of the eight repositories. When it first runs it needs read access to the sibling private repositories (a token in `secrets`), and the develop-core checkout step must use branch `main` (or `main` once you merge).
-* **develop-core's `.gitignore` used to hide `buildkit/`** (`build*/` matched it): a clean clone could not configure until commit "buildkit: track the CMake modules…". If you see `include could not find requested file: DevelopCompiler`, your checkout predates that commit.
+* **CI has never run** on any of the eight repositories. When it first runs it needs read access to the sibling private repositories (a token in `secrets`), and the libcore checkout step must use branch `main` (or `main` once you merge).
+* **libcore's `.gitignore` used to hide `buildkit/`** (`build*/` matched it): a clean clone could not configure until commit "buildkit: track the CMake modules…". If you see `include could not find requested file: DevelopCompiler`, your checkout predates that commit.
 * `libcudart` is loaded with `dlopen`. If `dev_test_cuda` says "libcudart is not installed", set `DEVELOP_CUDART=/usr/local/cuda/lib64/libcudart.so` (or add that directory to `LD_LIBRARY_PATH`).
 * Unified-memory GPUs (GB10, Jetson): cortex defaults to `cudaMalloc` memory (`CX_CUDA_MEMORY=device`); try `CX_CUDA_MEMORY=managed` for host-visible tensors without copies and compare throughput.
 * librpc commit `0798f1a` carries tool-attribution trailers the environment added; rewrite it if you want (`git commit --amend` + `git push --force-with-lease`), the environment refused force-pushes.

@@ -1,6 +1,6 @@
 # develop_require(<name> <tag>): make develop::<name> available.
 #
-# While the components live together in develop-core this is only needed by repositories outside it. It uses a
+# While the components live together in libcore this is only needed by repositories outside it. It uses a
 # sibling checkout when -DDEVELOP_LOCAL_ROOT=<dir> points at one, otherwise fetches the pinned tag.
 include_guard(GLOBAL)
 include(FetchContent)

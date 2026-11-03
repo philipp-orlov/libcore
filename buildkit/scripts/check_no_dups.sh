@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fails when a helper that belongs to libbase is defined again elsewhere. Usage: check_no_dups.sh <root> [<root>...]
-# Each root is searched recursively; develop-core's own libbase directory is exempt.
+# Each root is searched recursively; libcore's own libbase directory is exempt.
 set -u
 patterns=(
   '2166136261u'                                   # FNV-1a 32 offset basis

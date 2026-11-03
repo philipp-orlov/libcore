@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Philipp Orlov
 # SPDX-License-Identifier: Apache-2.0
 #
-# Continue the develop-core unification on a machine with an NVIDIA GPU.
+# Continue the libcore unification on a machine with an NVIDIA GPU.
 # Clones (or updates) the eight repositories side by side, builds and tests everything, then builds cortex with the
 # CUDA backend and runs its GPU tests, and writes one summary you can paste back.
 #
@@ -18,7 +18,7 @@
 #   SUFFIX        appended to REMOTE/<repo>                       (default: .git; empty for local directories)
 #   LOCAL_BRANCH  local work branch created from BRANCH           (default: develop/gpu)
 #   JOBS          parallel build jobs                             (default: nproc)
-#   SANITIZERS=1  also build/test develop-core under ASan+UBSan and TSan
+#   SANITIZERS=1  also build/test libcore under ASan+UBSan and TSan
 #   CUDA_ARCH     CMAKE_CUDA_ARCHITECTURES for cortex             (default: detected with nvidia-smi)
 #   GOLDEN=1      also run cortex's golden tests                  (default: 1)
 #   DEVELOP_SOAK_SECONDS  length of the soak stage                (default: 600)
@@ -36,7 +36,7 @@ JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
 SANITIZERS="${SANITIZERS:-0}"
 GOLDEN="${GOLDEN:-1}"
 RESULTS="$WS/handoff-results"
-REPOS=(develop-core libbufs libhttp libnosql librpc libsql gscope cortex)
+REPOS=(libcore libbufs libhttp libnosql librpc libsql gscope cortex)
 CONSUMERS=(libbufs libhttp libnosql librpc libsql gscope)
 
 mkdir -p "$RESULTS"
@@ -157,8 +157,8 @@ ssl_args() {
 
 # ----------------------------------------------------------------------------------------------------------------- core
 stage_core() {
-    info "develop-core (Release$( ((SANITIZERS)) && echo ', ASan+UBSan, TSan'))"
-    build_and_test core-release "$WS/develop-core" "$WS/build/core-release" "" -- -DCMAKE_BUILD_TYPE=Release
+    info "libcore (Release$( ((SANITIZERS)) && echo ', ASan+UBSan, TSan'))"
+    build_and_test core-release "$WS/libcore" "$WS/build/core-release" "" -- -DCMAKE_BUILD_TYPE=Release
     # The GPU-only test is in the run above (label gpu); show its output on its own so it is easy to find.
     if [[ -x "$WS/build/core-release/libdev/dev_test_cuda" ]]; then
         "$WS/build/core-release/libdev/dev_test_cuda" >"$RESULTS/core-gpu.log" 2>&1
@@ -169,8 +169,8 @@ stage_core() {
         esac
     fi
     if ((SANITIZERS)); then
-        build_and_test core-asan "$WS/develop-core" "$WS/build/core-asan" "" -- -DCMAKE_BUILD_TYPE=RelWithDebInfo -DDEVELOP_SANITIZE=address,undefined
-        build_and_test core-tsan "$WS/develop-core" "$WS/build/core-tsan" "" -- -DCMAKE_BUILD_TYPE=RelWithDebInfo -DDEVELOP_SANITIZE=thread
+        build_and_test core-asan "$WS/libcore" "$WS/build/core-asan" "" -- -DCMAKE_BUILD_TYPE=RelWithDebInfo -DDEVELOP_SANITIZE=address,undefined
+        build_and_test core-tsan "$WS/libcore" "$WS/build/core-tsan" "" -- -DCMAKE_BUILD_TYPE=RelWithDebInfo -DDEVELOP_SANITIZE=thread
     fi
 }
 
@@ -233,7 +233,7 @@ stage_soak() {
     local seconds="${DEVELOP_SOAK_SECONDS:-600}"
     info "Allocation soak, ${seconds}s"
     local bin="$WS/build/core-release/libbench/bench_soak_memory"
-    [[ -x "$bin" ]] || build_and_test core-release "$WS/develop-core" "$WS/build/core-release" "-R none" -- -DCMAKE_BUILD_TYPE=Release
+    [[ -x "$bin" ]] || build_and_test core-release "$WS/libcore" "$WS/build/core-release" "-R none" -- -DCMAKE_BUILD_TYPE=Release
     if DEVELOP_SOAK_SECONDS="$seconds" "$bin" >"$RESULTS/soak.log" 2>&1; then
         record soak ok "$(tail -1 "$RESULTS/soak.log")"
     else

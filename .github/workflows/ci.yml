@@ -14,7 +14,7 @@ jobs:
       - name: Install and use
         run: |
           cmake --install build --prefix "$PWD/prefix"
-          test -f prefix/lib/cmake/develop-core/develop-coreConfig.cmake
+          test -f prefix/lib/cmake/libcore/libcoreConfig.cmake
   asan-ubsan:
     runs-on: ubuntu-24.04
     steps:

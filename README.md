@@ -1,4 +1,4 @@
-# develop-core
+# libcore
 
 The shared components of the seven libraries (libsql, librpc, libnosql, libhttp, libbufs, cortex, gscope), kept in one
 repository until they are stable enough to split. Each directory is self-contained, depends only on the ones before it
@@ -38,11 +38,11 @@ As a subdirectory (what the seven repositories do, with a sibling checkout):
 
 ```cmake
 set(DEVELOP_BUILD_TESTS OFF CACHE BOOL "")
-add_subdirectory(../develop-core develop-core)
+add_subdirectory(../libcore libcore)
 target_link_libraries(mylib PRIVATE develop::mem develop::sys)
 ```
 
-Or installed: `cmake --install build --prefix /opt/develop`, then `find_package(develop-core CONFIG REQUIRED)` and
+Or installed: `cmake --install build --prefix /opt/develop`, then `find_package(libcore CONFIG REQUIRED)` and
 link `develop::<component>`.
 
 ## Rules
