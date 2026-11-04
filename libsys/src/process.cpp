@@ -178,6 +178,13 @@ Process::ReadResult Process::readLine(std::string& out, std::chrono::millisecond
             const ssize_t n = ::read(outFd_, buffer, sizeof buffer);
             if (n > 0) {
                 pending_.append(buffer, static_cast<std::size_t>(n));
+                // A child that never prints a newline must not grow this for ever: hand over what there is.
+                constexpr std::size_t kMaxLineBytes = 1024 * 1024;
+                if (pending_.size() > kMaxLineBytes && pending_.find('\n') == std::string::npos) {
+                    out.swap(pending_);
+                    pending_.clear();
+                    return ReadResult::Line;
+                }
             } else if (n == 0 || (errno != EINTR && errno != EAGAIN)) {
                 if (pending_.empty())
                     return ReadResult::Eof;

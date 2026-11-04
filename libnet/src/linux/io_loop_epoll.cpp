@@ -735,8 +735,9 @@ const std::string& TcpConnection::peerAddress() const
 // TcpListener
 // ---------------------------------------------------------------------
 
-struct TcpListener::Impl : EpollHandler
+struct TcpListener::Impl : EpollHandler, std::enable_shared_from_this<TcpListener::Impl>
 {
+    bool paused = false;
     IoLoop& loop;
     socket_t fd = kInvalidSocket;
     bool epollAdded = false;
@@ -758,7 +759,7 @@ struct TcpListener::Impl : EpollHandler
     // again on the next wait.
     void onEvent(uint32_t) override
     {
-        for (size_t accepted = 0; accepted < 64 && fd != kInvalidSocket; ++accepted) {
+        for (size_t accepted = 0; accepted < 64 && fd != kInvalidSocket && !paused; ++accepted) {
             socket_t client = ::accept4(fd, nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
             if (client == kInvalidSocket) {
                 if (errno == EINTR)
@@ -786,14 +787,38 @@ struct TcpListener::Impl : EpollHandler
             NET_LOG_WARN("accept(): out of file descriptors, turning connections away");
         }
         if (spareFd < 0)
+            spareFd = ::open("/dev/null", O_RDONLY | O_CLOEXEC);   // a descriptor may have been freed since
+        if (spareFd >= 0) {
+            ::close(spareFd);
+            const int client = ::accept4(fd, nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
+            if (client >= 0)
+                ::close(client);
+            spareFd = ::open("/dev/null", O_RDONLY | O_CLOEXEC);
+        }
+        if (spareFd < 0)
+            pauseAccepting();   // cannot turn anyone away: stop listening for a moment instead of spinning
+    }
+
+    void pauseAccepting()
+    {
+        if (paused || fd == kInvalidSocket)
             return;
-
-        ::close(spareFd);
-        const int client = ::accept4(fd, nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
-        if (client >= 0)
-            ::close(client);
-
-        spareFd = ::open("/dev/null", O_RDONLY | O_CLOEXEC);
+        try {
+            loop.addTimer(std::chrono::milliseconds(100), [self = weak_from_this()] {
+                auto impl = self.lock();
+                if (!impl || impl->fd == kInvalidSocket)
+                    return;
+                epoll_event ev{};
+                ev.events = EPOLLIN;
+                ev.data.u64 = impl->token;
+                epoll_ctl(impl->loop.impl()->epfd, EPOLL_CTL_ADD, impl->fd, &ev);
+                impl->paused = false;
+            });
+        } catch (const std::exception&) {
+            return;   // no timer slot: keep listening rather than never listen again
+        }
+        epoll_ctl(loop.impl()->epfd, EPOLL_CTL_DEL, fd, nullptr);
+        paused = true;
     }
     void onDeferred() override {}
 };

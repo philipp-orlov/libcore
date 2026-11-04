@@ -3,7 +3,9 @@
 
 #include "hw/tegrastats_provider.hpp"
 
+#include <algorithm>
 #include <charconv>
+#include <chrono>
 #include <cstdlib>
 #include <ctime>
 #include <sstream>
@@ -150,15 +152,19 @@ TegrastatsProvider::~TegrastatsProvider()
     stop();
 }
 
+std::unique_ptr<LineStream> TegrastatsProvider::makeStream()
+{
+    return streamFactory_ ? streamFactory_()
+                          : std::make_unique<PopenLineStream>(
+                                std::vector<std::string>{"tegrastats", "--interval", std::to_string(intervalMs_)});
+}
+
 bool TegrastatsProvider::start(SampleCallback callback)
 {
     if (running_.exchange(true))
         return true;
 
-    stream_ = streamFactory_
-                  ? streamFactory_()
-                  : std::make_unique<PopenLineStream>(
-                        std::vector<std::string>{"tegrastats", "--interval", std::to_string(intervalMs_)});
+    stream_ = makeStream();
     if (!stream_) {
         running_ = false;
         return false;
@@ -170,27 +176,46 @@ bool TegrastatsProvider::start(SampleCallback callback)
 
 void TegrastatsProvider::stop()
 {
-    if (!running_.exchange(false))
-        return;
-    // Cancel (interrupt a blocked read) and join the reader thread before
-    // destroying the stream -- destroying it first races the thread's
-    // still-in-flight nextLine() call (heap-use-after-free).
-    if (stream_)
-        stream_->cancel();
+    {
+        std::lock_guard<std::mutex> lock(streamMutex_);
+        if (!running_.exchange(false))
+            return;
+        // Cancel (interrupt a blocked read) and join the reader thread before
+        // destroying the stream.
+        if (stream_)
+            stream_->cancel();
+    }
+    stopWake_.notify_all();
     if (worker_.joinable())
         worker_.join();
     stream_.reset();
 }
 
+// tegrastats can die (a driver update, an OOM kill, someone's pkill). Without a restart the dashboard would show the
+// last sample for ever while everything looks connected.
 void TegrastatsProvider::run(SampleCallback callback)
 {
+    constexpr auto kMaxBackoff = std::chrono::seconds(30);
+    std::chrono::seconds backoff{1};
     std::string line;
-    while (running_.load() && stream_ && stream_->nextLine(line)) {
-        Sample sample;
-        if (parseTegrastatsLine(line, sample))
-            callback(sample);
-        else
-            hw::warn("tegrastats: unrecognized line, skipped");
+    while (running_.load()) {
+        LineStream* stream = stream_.get();
+        while (running_.load() && stream && stream->nextLine(line)) {
+            backoff = std::chrono::seconds(1);
+            Sample sample;
+            if (parseTegrastatsLine(line, sample))
+                callback(sample);
+            else
+                hw::warn("tegrastats: unrecognized line, skipped");
+        }
+        if (!running_.load())
+            return;
+        hw::warn("tegrastats ended; starting it again");
+        std::unique_lock<std::mutex> lock(streamMutex_);
+        if (stopWake_.wait_for(lock, backoff, [this] { return !running_.load(); }))
+            return;
+        backoff = std::min<std::chrono::seconds>(backoff * 2, kMaxBackoff);
+        stream_ = makeStream();
     }
 }
 

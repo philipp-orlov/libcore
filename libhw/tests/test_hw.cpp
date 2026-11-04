@@ -1,6 +1,13 @@
 // Copyright (c) 2026 Philipp Orlov
 // SPDX-License-Identifier: Apache-2.0
 
+#include <atomic>
+#include <chrono>
+#include <memory>
+#include <string>
+#include <thread>
+#include <vector>
+#include "hw/tegrastats_provider.hpp"
 #include <thread>
 
 #include "bench/alloc_budget.hpp"
@@ -80,6 +87,21 @@ TEST(probeReportsThisMachine) {
     jetson.unifiedMemory = true;
     jetson.memAvailableMb = 4000;
     CHECK_EQ(hw::defaultCacheBudgetMb(jetson, 0.25), 1000.0);
+}
+
+TEST(tegrastatsIsStartedAgainWhenItEnds) {
+    std::atomic<int> streams{0};
+    std::atomic<int> samples{0};
+    const std::string line = "RAM 4461/15524MB CPU [0%@1984] GR3D_FREQ 0% GPU@40C";
+    hw::TegrastatsProvider provider(1000, [&]() -> std::unique_ptr<hw::LineStream> {
+        ++streams;
+        return std::make_unique<hw::VectorLineStream>(std::vector<std::string>{line});
+    });
+    CHECK(provider.start([&](const hw::Sample&) { ++samples; }));
+    std::this_thread::sleep_for(std::chrono::milliseconds(1500));   // the first restart waits 1 s
+    provider.stop();
+    CHECK(streams.load() >= 2);
+    CHECK(samples.load() >= 2);
 }
 
 int main() { return tst::runAll("hw"); }

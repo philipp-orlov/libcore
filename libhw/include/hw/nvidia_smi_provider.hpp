@@ -9,7 +9,9 @@
 #pragma once
 
 #include <atomic>
+#include <condition_variable>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -55,6 +57,10 @@ private:
     unsigned intervalMs_;
     unsigned gpuCount_;
     LineStreamFactory streamFactory_;
+    std::unique_ptr<LineStream> makeStream();
+
+    std::mutex streamMutex_;              // stream_: run() replaces it while stop() cancels it
+    std::condition_variable stopWake_;
     std::unique_ptr<LineStream> stream_;
     ProcCpuMemSampler cpuMemSampler_;
     std::thread worker_;

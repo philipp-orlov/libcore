@@ -3,6 +3,7 @@
 
 #include "hw/nvidia_smi_provider.hpp"
 
+#include <chrono>
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -84,6 +85,14 @@ NvidiaSmiProvider::~NvidiaSmiProvider()
     stop();
 }
 
+std::unique_ptr<LineStream> NvidiaSmiProvider::makeStream()
+{
+    return streamFactory_ ? streamFactory_()
+                          : std::make_unique<PopenLineStream>(std::vector<std::string>{
+                                "nvidia-smi", "--query-gpu=" + std::string(kQueryFields), "--format=csv,noheader,nounits",
+                                "-l", std::to_string(std::max(1u, intervalMs_ / 1000))});
+}
+
 bool NvidiaSmiProvider::start(SampleCallback callback)
 {
     if (running_.exchange(true))
@@ -104,11 +113,7 @@ bool NvidiaSmiProvider::start(SampleCallback callback)
         gpuCount_ = 1;  // tests supply a stream factory; default to one GPU
     }
 
-    stream_ = streamFactory_
-                  ? streamFactory_()
-                  : std::make_unique<PopenLineStream>(std::vector<std::string>{
-                        "nvidia-smi", "--query-gpu=" + std::string(kQueryFields), "--format=csv,noheader,nounits",
-                        "-l", std::to_string(std::max(1u, intervalMs_ / 1000))});
+    stream_ = makeStream();
     if (!stream_) {
         running_ = false;
         return false;
@@ -120,56 +125,70 @@ bool NvidiaSmiProvider::start(SampleCallback callback)
 
 void NvidiaSmiProvider::stop()
 {
-    if (!running_.exchange(false))
-        return;
-    // Cancel (interrupt a blocked read) and join the reader thread before
-    // destroying the stream -- destroying it first races the thread's
-    // still-in-flight nextLine() call (heap-use-after-free).
-    if (stream_)
-        stream_->cancel();
+    {
+        std::lock_guard<std::mutex> lock(streamMutex_);
+        if (!running_.exchange(false))
+            return;
+        // Cancel (interrupt a blocked read) and join the reader thread before
+        // destroying the stream.
+        if (stream_)
+            stream_->cancel();
+    }
+    stopWake_.notify_all();
     if (worker_.joinable())
         worker_.join();
     stream_.reset();
 }
 
+// nvidia-smi can die (a driver reload, an OOM kill). Without a restart the
+// dashboard would show the last sample for ever.
 void NvidiaSmiProvider::run(SampleCallback callback)
 {
-    // Read stream_'s pointer exactly once: stop() overwrites the member
-    // concurrently from another thread (to interrupt a blocked read), so
-    // re-reading it every iteration is a data race that can hand nextLine()
-    // a null/torn pointer.
-    LineStream* stream = stream_.get();
+    constexpr auto kMaxBackoff = std::chrono::seconds(30);
+    std::chrono::seconds backoff{1};
     std::string line;
-    while (running_.load() && stream) {
-        Sample sample = cpuMemSampler_.sample();
-        bool ok = true;
-        for (unsigned i = 0; i < gpuCount_ && ok; ++i) {
-            if (!stream->nextLine(line)) {
-                ok = false;
+    while (running_.load()) {
+        LineStream* stream = stream_.get();
+        while (running_.load() && stream) {
+            Sample sample = cpuMemSampler_.sample();
+            bool ok = true;
+            for (unsigned i = 0; i < gpuCount_ && ok; ++i) {
+                if (!stream->nextLine(line)) {
+                    ok = false;
+                    break;
+                }
+                GpuSample gpu;
+                if (parseNvidiaSmiCsvLine(line, gpu)) {
+                    // memory.used/memory.total came back [N/A] -- unified memory
+                    // (no separate GPU pool), so mirror system RAM the same way
+                    // TegrastatsProvider does for Jetson.
+                    if (std::isnan(gpu.memoryUsedMb))
+                        gpu.memoryUsedMb = sample.memUsedMb;
+                    if (std::isnan(gpu.memoryTotalMb))
+                        gpu.memoryTotalMb = sample.memTotalMb;
+                    // Surface each GPU's temperature in the generic sensor table
+                    // too (thermal_zone sysfs, read above, is often empty on
+                    // servers that lack ACPI thermal zones).
+                    if (gpu.temperatureC > -1000.0)
+                        sample.temperatures.emplace_back("GPU " + std::to_string(i), gpu.temperatureC);
+                    sample.gpus.push_back(std::move(gpu));
+                } else {
+                    hw::warn("nvidia-smi: unrecognized line, skipped");
+                }
+            }
+            if (!ok)
                 break;
-            }
-            GpuSample gpu;
-            if (parseNvidiaSmiCsvLine(line, gpu)) {
-                // memory.used/memory.total came back [N/A] -- unified memory
-                // (no separate GPU pool), so mirror system RAM the same way
-                // TegrastatsProvider does for Jetson.
-                if (std::isnan(gpu.memoryUsedMb))
-                    gpu.memoryUsedMb = sample.memUsedMb;
-                if (std::isnan(gpu.memoryTotalMb))
-                    gpu.memoryTotalMb = sample.memTotalMb;
-                // Surface each GPU's temperature in the generic sensor table
-                // too (thermal_zone sysfs, read above, is often empty on
-                // servers that lack ACPI thermal zones).
-                if (gpu.temperatureC > -1000.0)
-                    sample.temperatures.emplace_back("GPU " + std::to_string(i), gpu.temperatureC);
-                sample.gpus.push_back(std::move(gpu));
-            } else {
-                hw::warn("nvidia-smi: unrecognized line, skipped");
-            }
+            backoff = std::chrono::seconds(1);
+            callback(sample);
         }
-        if (!ok)
-            break;
-        callback(sample);
+        if (!running_.load())
+            return;
+        hw::warn("nvidia-smi ended; starting it again");
+        std::unique_lock<std::mutex> lock(streamMutex_);
+        if (stopWake_.wait_for(lock, backoff, [this] { return !running_.load(); }))
+            return;
+        backoff = std::min<std::chrono::seconds>(backoff * 2, kMaxBackoff);
+        stream_ = makeStream();
     }
 }
 

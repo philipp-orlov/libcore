@@ -56,6 +56,10 @@ public:
     bool sealed() const noexcept { return sealed_.load(std::memory_order_acquire); }
     // Maps slabs until at least `blocks` blocks are free. Returns false if it could not.
     bool prewarm(std::size_t blocks) noexcept;
+    // Returns the pages of free blocks to the OS, keeping each block's first page (it holds the free-list link). The
+    // blocks stay in the pool and fault back in on use. No effect for blocks under two system pages. Returns the
+    // bytes offered back. Blocks in thread caches are skipped.
+    std::size_t trimFree() noexcept;
 
     std::size_t blockBytes() const noexcept { return blockBytes_; }
     std::size_t blocksPerSlab() const noexcept { return blocksPerSlab_; }

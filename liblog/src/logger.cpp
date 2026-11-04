@@ -206,7 +206,14 @@ void Logger::wakeConsumer() noexcept {
 // per consumer cycle, so a burst costs a few futex calls, not one per line).
 #define LG_NOTIFY_IF_FILLING(ring, head)                                                                  \
     do {                                                                                                  \
-        if ((head) + 1 - (ring)->cachedTail >= (ring)->mask / 2 && !wakePending_.exchange(true, std::memory_order_acq_rel)) \
+        if ((head) + 1 - (ring)->cachedTail >= (ring)->mask / 2) {                                        \
+            (ring)->cachedTail = (ring)->tail.load(std::memory_order_acquire);                            \
+            if ((head) + 1 - (ring)->cachedTail >= (ring)->mask / 2 &&                                    \
+                !wakePending_.exchange(true, std::memory_order_acq_rel))                                  \
+                wakeConsumer();                                                                           \
+        }                                                                                                 \
+        if (consumerParked_.load(std::memory_order_relaxed) &&                                            \
+            consumerParked_.exchange(false, std::memory_order_acq_rel))                                   \
             wakeConsumer();                                                                               \
     } while (0)
 
@@ -438,7 +445,8 @@ bool Logger::drainOnce(bool all) {
     if (consumedNow) {
         consumed_.fetch_add(consumedNow, std::memory_order_release);
         progressWord_.fetch_add(1, std::memory_order_release);
-        sys::wakeAll(progressWord_);
+        if (flushWaiters_.load(std::memory_order_acquire) != 0)
+            sys::wakeAll(progressWord_);
     }
     return any;
 }
@@ -449,6 +457,9 @@ void Logger::consumerLoop() {
     sys::wakeAll(started_);
     auto lastDropReport = std::chrono::steady_clock::now();
     std::uint64_t reportedDrops = 0;
+    constexpr unsigned kIdleRoundsBeforePark = 20;
+    constexpr std::chrono::milliseconds kParkedPoll{1000};
+    unsigned idleRounds = 0;
     for (;;) {
         const std::uint32_t seen = wakeWord_.load(std::memory_order_acquire);
         wakePending_.store(false, std::memory_order_release);
@@ -476,8 +487,17 @@ void Logger::consumerLoop() {
             sys::wakeAll(progressWord_);
             return;
         }
-        if (!any)
+        if (any) {
+            idleRounds = 0;
+            consumerParked_.store(false, std::memory_order_relaxed);
+        } else if (++idleRounds < kIdleRoundsBeforePark) {
             sys::waitOnAddress(wakeWord_, seen, options_.idlePoll);
+        } else {
+            // Nothing logged for a while: sleep long. A producer wakes us; if it races with this store the line
+            // waits at most kParkedPoll, which is harmless.
+            consumerParked_.store(true, std::memory_order_relaxed);
+            sys::waitOnAddress(wakeWord_, seen, kParkedPoll);
+        }
     }
 }
 
@@ -486,6 +506,8 @@ void Logger::flush() {
         return;
     }
     const std::uint64_t target = producedLines();
+    flushWaiters_.fetch_add(1, std::memory_order_acq_rel);
+    struct Leave { std::atomic<unsigned>& n; ~Leave() { n.fetch_sub(1, std::memory_order_acq_rel); } } leave{flushWaiters_};
     while (consumed_.load(std::memory_order_acquire) < target) {
         const std::uint32_t p = progressWord_.load(std::memory_order_acquire);
         if (consumed_.load(std::memory_order_acquire) >= target || !consumer_.joinable())
@@ -523,6 +545,7 @@ Logger& Logger::instance() {
         if (const char* file = std::getenv("LG_FILE")) {
             FileSinkOptions fo;
             fo.path = file;
+            fo.rotateBytes = std::uint64_t{64} << 20;   // a service left running must not fill the disk
             std::string error;
             if (auto sink = makeFileSink(fo, &error))
                 l->addSink(std::move(sink));

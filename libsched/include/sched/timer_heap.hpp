@@ -133,9 +133,10 @@ public:
         if (when <= now)
             return 0;
 
+        // Round up: truncating a 0.7 ms wait to 0 makes the caller spin until the timer is due.
         return static_cast<int>(std::min<int64_t>(
             std::numeric_limits<int>::max(),
-            std::chrono::duration_cast<std::chrono::milliseconds>(when - now).count()));
+            std::chrono::ceil<std::chrono::milliseconds>(when - now).count()));
     }
 
     size_t capacity() const noexcept { return slots_.size(); }

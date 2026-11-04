@@ -438,7 +438,12 @@ void SizeClassPool::ageIdle(std::uint64_t nowNs) noexcept {
     }
 }
 
-void SizeClassPool::trim() noexcept { ageIdle(~std::uint64_t{0}); }
+void SizeClassPool::trim() noexcept {
+    ageIdle(~std::uint64_t{0});
+    auto* arr = static_cast<SlabPool*>(smallStorage_);
+    for (std::size_t c = 0; c < smallCount_; ++c)
+        arr[c].trimFree();
+}
 
 void SizeClassPool::releaseIdleLarge() noexcept {
     for (std::size_t s = 0; s < stripeCount_; ++s) {

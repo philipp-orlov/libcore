@@ -483,6 +483,21 @@ Stats SlabPool::stats() const noexcept {
     return st;
 }
 
+std::size_t SlabPool::trimFree() noexcept {
+    const std::size_t page = sys::pageSize();
+    if (blockBytes_ < 2 * page)
+        return 0;
+    std::size_t offered = 0;
+    for (unsigned i = 0; i < shardCount_; ++i) {
+        std::lock_guard<std::mutex> g(shards_[i].mu);
+        for (void* p = shards_[i].freeHead; p; p = *static_cast<void**>(p)) {
+            sys::vmDiscard(static_cast<char*>(p) + sizeof(void*), blockBytes_ - sizeof(void*));
+            offered += blockBytes_ - page;
+        }
+    }
+    return offered;
+}
+
 bool SlabPool::prewarm(std::size_t blocks) noexcept {
     std::size_t have = 0;
     for (unsigned i = 0; i < shardCount_; ++i) {
