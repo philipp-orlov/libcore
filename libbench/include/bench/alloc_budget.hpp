@@ -32,7 +32,14 @@ void* operator new(std::size_t n) {
         return p;
     throw std::bad_alloc();
 }
+// std::stable_sort's temporary buffer and friends ask for the nothrow form, and delete it through the forms below.
+void* operator new(std::size_t n, const std::nothrow_t&) noexcept {
+    if (bench::g_counting.load(std::memory_order_relaxed))
+        bench::g_newCalls.fetch_add(1, std::memory_order_relaxed);
+    return std::malloc(n ? n : 1);
+}
 void operator delete(void* p) noexcept { std::free(p); }
+void operator delete(void* p, const std::nothrow_t&) noexcept { std::free(p); }
 void operator delete(void* p, std::size_t) noexcept { std::free(p); }
 
 // Compatibility for the tests written against the first spelling.

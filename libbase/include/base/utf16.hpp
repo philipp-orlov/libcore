@@ -17,15 +17,32 @@ namespace base {
 inline constexpr std::uint32_t kFirstSurrogate = 0xD800, kFirstLowSurrogate = 0xDC00, kLastSurrogate = 0xDFFF;
 inline constexpr std::uint32_t kReplacementChar = 0xFFFD;
 
+constexpr bool isHighSurrogate(std::uint32_t unit) noexcept { return unit >= kFirstSurrogate && unit < kFirstLowSurrogate; }
+constexpr bool isLowSurrogate(std::uint32_t unit) noexcept { return unit >= kFirstLowSurrogate && unit <= kLastSurrogate; }
+constexpr std::uint32_t joinSurrogates(std::uint32_t high, std::uint32_t low) noexcept {
+    return 0x10000 + ((high - kFirstSurrogate) << 10) + (low - kFirstLowSurrogate);
+}
+
+// Appends `cp` as one code unit, or as a surrogate pair above the first plane.
+template <class Out>
+void appendCodePointUtf16(Out& out, std::uint32_t cp) {
+    using C = typename Out::value_type;
+    if (cp >= 0x10000) {
+        cp -= 0x10000;
+        out.push_back(C(kFirstSurrogate + (cp >> 10)));
+        out.push_back(C(kFirstLowSurrogate + (cp & 0x3FF)));
+    } else {
+        out.push_back(C(cp));
+    }
+}
+
 template <class Out>
 void appendUtf8FromUtf16(std::u16string_view in, Out& out) {
     out.reserve(out.size() + in.size());
     for (std::size_t i = 0; i < in.size(); ++i) {
         std::uint32_t cp = in[i];
-        if (cp >= kFirstSurrogate && cp < kFirstLowSurrogate && i + 1 < in.size() && in[i + 1] >= kFirstLowSurrogate &&
-            in[i + 1] <= kLastSurrogate) {
-            cp = 0x10000 + ((cp - kFirstSurrogate) << 10) + (std::uint32_t(in[++i]) - kFirstLowSurrogate);
-        }
+        if (isHighSurrogate(cp) && i + 1 < in.size() && isLowSurrogate(in[i + 1]))
+            cp = joinSurrogates(cp, in[++i]);
         using C = typename Out::value_type;
         if (cp < 0x80) {
             out.push_back(C(cp));
@@ -47,7 +64,6 @@ void appendUtf8FromUtf16(std::u16string_view in, Out& out) {
 
 template <class Out>
 void appendUtf16FromUtf8(std::string_view in, Out& out) {
-    using C = typename Out::value_type;
     out.reserve(out.size() + in.size());
     for (std::size_t i = 0; i < in.size();) {
         const auto c = static_cast<std::uint8_t>(in[i]);
@@ -74,13 +90,7 @@ void appendUtf16FromUtf8(std::string_view in, Out& out) {
         for (std::size_t k = 1; k <= extra; ++k)
             cp = (cp << 6) | (static_cast<std::uint8_t>(in[i + k]) & 0x3Fu);
         i += extra + 1;
-        if (cp >= 0x10000) {
-            cp -= 0x10000;
-            out.push_back(C(kFirstSurrogate + (cp >> 10)));
-            out.push_back(C(kFirstLowSurrogate + (cp & 0x3FF)));
-        } else {
-            out.push_back(C(cp));
-        }
+        appendCodePointUtf16(out, cp);
     }
 }
 

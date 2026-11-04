@@ -99,8 +99,9 @@ private:
         std::mutex mu;
         LargeEntry* entries = nullptr;
         IndexEntry* index = nullptr;
-        std::uint32_t* freeSlots = nullptr;   // stack of unused entry slots
+        std::uint32_t* freeSlots = nullptr;   // stack of returned entry slots
         std::size_t freeSlotCount = 0;
+        std::uint32_t freshSlots = 0;         // slots below this have been used at least once
         std::uint32_t idleHead[ClassTable::kMaxClasses] = {};
         std::atomic<std::uint32_t> idleCount[ClassTable::kMaxClasses] = {};   // written under mu, read without it
         Counters counters;                    // acquires / releases / in use / peak of this stripe

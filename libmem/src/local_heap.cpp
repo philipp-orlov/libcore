@@ -30,6 +30,18 @@ S* segmentOf(void* block) noexcept {
     return reinterpret_cast<S*>(reinterpret_cast<std::uintptr_t>(block) & ~(std::uintptr_t{LocalHeap::kSegmentBytes} - 1));
 }
 
+#if defined(_MSC_VER)
+unsigned lowestBit(std::uint32_t mask) noexcept {
+    unsigned long index = 0;
+    _BitScanForward(&index, mask);
+    return static_cast<unsigned>(index);
+}
+unsigned bitCount(std::uint32_t mask) noexcept { return static_cast<unsigned>(__popcnt(mask)); }
+#else
+unsigned lowestBit(std::uint32_t mask) noexcept { return static_cast<unsigned>(__builtin_ctz(mask)); }
+unsigned bitCount(std::uint32_t mask) noexcept { return static_cast<unsigned>(__builtin_popcount(mask)); }
+#endif
+
 unsigned blockIndex(const void* block) noexcept {
     return static_cast<unsigned>((reinterpret_cast<std::uintptr_t>(block) & (LocalHeap::kSegmentBytes - 1)) / LocalHeap::kBlockBytes);
 }
@@ -63,6 +75,7 @@ LocalHeap::Segment* LocalHeap::mapSegment() {
     const sys::VmRegion region = sys::tryVmMapAligned(kSegmentBytes, kSegmentBytes);
     if (!region.base)
         throw std::bad_alloc();
+    sys::vmAdviseNoHuge(region.base, region.bytes);  // this heap gives pages back by the block
     auto* segment = static_cast<Segment*>(region.base);
     segment->prevAll = nullptr;
     segment->nextAll = segments_;
@@ -95,7 +108,7 @@ void LocalHeap::unmapSegment(Segment* segment) noexcept {
         if (segment->nextFree)
             segment->nextFree->prevFree = segment->prevFree;
     }
-    idleResident_ -= static_cast<std::uint64_t>(__builtin_popcount(segment->residentMask & segment->freeMask));
+    idleResident_ -= bitCount(segment->residentMask & segment->freeMask);
     --segmentCount_;
     unpoison(segment, kSegmentBytes);
     sys::vmUnmap(segment, kSegmentBytes);
@@ -105,7 +118,7 @@ LocalHeap::Block* LocalHeap::takeBlock(std::size_t cls) {
     Segment* segment = withFree_ ? withFree_ : mapSegment();
     // A block whose pages are resident first: it costs no page faults.
     const std::uint32_t warm = segment->freeMask & segment->residentMask;
-    const unsigned index = static_cast<unsigned>(__builtin_ctz(warm ? warm : segment->freeMask));
+    const unsigned index = lowestBit(warm ? warm : segment->freeMask);
     const std::uint32_t bit = std::uint32_t{1} << index;
     if (warm)
         --idleResident_;
@@ -239,7 +252,7 @@ void LocalHeap::trim() noexcept {
     for (Segment* segment = withFree_; segment && idleResident_ > keep;) {
         Segment* next = segment->nextFree;
         if (segment->freeMask == kAllBlocks) {
-            const auto resident = static_cast<std::uint64_t>(__builtin_popcount(segment->residentMask));
+            const auto resident = static_cast<std::uint64_t>(bitCount(segment->residentMask));
             if (idleResident_ >= keep + resident)
                 unmapSegment(segment);
         }
@@ -250,7 +263,7 @@ void LocalHeap::trim() noexcept {
     for (Segment* segment = withFree_; segment && idleResident_ > keep; segment = segment->nextFree) {
         std::uint32_t resident = segment->freeMask & segment->residentMask;
         while (resident && idleResident_ > keep) {
-            const unsigned index = static_cast<unsigned>(__builtin_ctz(resident));
+            const unsigned index = lowestBit(resident);
             const std::uint32_t bit = std::uint32_t{1} << index;
             resident &= ~bit;
             sys::vmDiscard(reinterpret_cast<char*>(segment) + index * kBlockBytes, kBlockBytes);

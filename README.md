@@ -1,6 +1,6 @@
 # libcore
 
-libcore is the shared foundation under a family of related projects: libsql, librpc, libnosql, libhttp, libbufs, cortex, and gscope.
+libcore is the shared foundation under a family of related projects: libsql, librpc, libnosql, libhttp, libbufs, libscript, cortex, and gscope.
 
 Each component is self-contained and depends only on the components listed before it. Everything builds as C++17, except cortex, which is C++20 and uses these components unchanged.
 
@@ -8,9 +8,9 @@ Each component is self-contained and depends only on the components listed befor
 
 | Component | What it does |
 |---|---|
-| `libbase` | Status and `Result` types, span/slice views, hashes and checksums (xxh3, FNV-1a, CRC32C, SHA-1), base64/hex, UTF-8 |
-| `libsys` | OS layer: virtual memory, futex waits, CPU topology, processes without a shell, files and durability, sockets, shared memory |
-| `libmem` | Memory allocators: slab, size-class, arena, object pools, and a caching allocator |
+| `libbase` | Status and `Result` types, span/slice views, hashes and checksums (xxh3, FNV-1a, CRC32C, SHA-1), base64/hex, UTF-8 and UTF-16, locale-independent number conversion |
+| `libsys` | OS layer: virtual memory and executable pages, futex waits, CPU topology, processes without a shell, files and durability, sockets, shared memory |
+| `libmem` | Memory allocators: slab, size-class, arena (plain and with destructors), object pools, a single-owner small-object heap, a standard allocator over a pool, and a caching allocator |
 | `libsched` | Thread pool, `parallelFor`, timer heap and wheel, task queue |
 | `liblog` | Asynchronous logger with per-thread rings and console, file, syslog, and callback sinks |
 | `libjson` | JSON value type, parser, and an allocation-free writer |

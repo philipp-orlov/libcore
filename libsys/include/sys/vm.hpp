@@ -45,6 +45,9 @@ void vmCommit(void* p, std::size_t bytes);
 
 // Ask for transparent huge pages on a large region (advice only; no failure if unsupported).
 void vmAdviseHuge(void* p, std::size_t bytes) noexcept;
+// The opposite, for a region that hands pages back piecemeal: on a kernel set to `always`, the first touch of an
+// aligned region would otherwise make 2 MiB resident at once.
+void vmAdviseNoHuge(void* p, std::size_t bytes) noexcept;
 
 // Faults every page of [p, p+bytes) in now, so first touches on a hot path cost no page fault and resident memory is
 // flat from the start (shared rings, arenas). Linux 5.14+: MADV_POPULATE_WRITE; otherwise each page is read once

@@ -8,16 +8,19 @@
 #include <cstddef>
 #include <string>
 #include <string_view>
+#include <type_traits>
 
 namespace json {
 
-// Writes the escaped body of `s` (no surrounding quotes).
-template <class Sink>
-inline void escapeTo(Sink& out, std::string_view s) {
+// Writes the escaped body of `s` (no surrounding quotes), for text in any code unit: UTF-8 here, UTF-16 for a language
+// runtime whose strings are. Only ASCII is ever escaped, so the encoding does not matter. The sink takes runs of `C`
+// through put(const C*, size_t) and escapes through put(const char*, size_t).
+template <class Sink, class C>
+inline void escapeUnitsTo(Sink& out, std::basic_string_view<C> s) {
     static constexpr char kHex[] = "0123456789abcdef";
     std::size_t run = 0;
     for (std::size_t i = 0; i < s.size(); ++i) {
-        const unsigned char c = static_cast<unsigned char>(s[i]);
+        const auto c = static_cast<std::make_unsigned_t<C>>(s[i]);
         if (c >= 0x20 && c != '"' && c != '\\')
             continue;
         if (i > run)
@@ -39,6 +42,11 @@ inline void escapeTo(Sink& out, std::string_view s) {
     }
     if (s.size() > run)
         out.put(s.data() + run, s.size() - run);
+}
+
+template <class Sink>
+inline void escapeTo(Sink& out, std::string_view s) {
+    escapeUnitsTo<Sink, char>(out, s);
 }
 
 // Size of the escaped body, without quotes.

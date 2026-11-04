@@ -43,6 +43,16 @@ TEST(badBytesDecodeToTheReplacementCharacter) {
     CHECK(toUtf16("\xC3") == std::u16string(u"�"));
 }
 
+TEST(codePointsAndSurrogatesConvertBothWays) {
+    std::u16string out;
+    base::appendCodePointUtf16(out, 0x41);
+    base::appendCodePointUtf16(out, 0x1F600);
+    CHECK(out == std::u16string(u"A\U0001F600"));
+    CHECK(base::isHighSurrogate(out[1]));
+    CHECK(base::isLowSurrogate(out[2]));
+    CHECK_EQ(base::joinSurrogates(out[1], out[2]), 0x1F600u);
+}
+
 TEST(appendKeepsWhatIsThere) {
     std::string out = "x";
     base::appendUtf8FromUtf16(u"y", out);

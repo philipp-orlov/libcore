@@ -135,6 +135,15 @@ void vmAdviseHuge(void* p, std::size_t bytes) noexcept {
 #endif
 }
 
+void vmAdviseNoHuge(void* p, std::size_t bytes) noexcept {
+#ifdef MADV_NOHUGEPAGE
+    (void)::madvise(p, bytes, MADV_NOHUGEPAGE);
+#else
+    (void)p;
+    (void)bytes;
+#endif
+}
+
 void vmPrefault(void* p, std::size_t bytes) noexcept {
     if (!p || !bytes)
         return;
@@ -242,6 +251,8 @@ void vmPrefault(void* p, std::size_t bytes) noexcept {
         (void)bytesIn[off];
     (void)bytesIn[bytes - 1];
 }
+
+void vmAdviseNoHuge(void*, std::size_t) noexcept {}
 bool vmLock(void* p, std::size_t bytes) noexcept { return ::VirtualLock(p, bytes) != 0; }
 void vmUnlock(void* p, std::size_t bytes) noexcept { (void)::VirtualUnlock(p, bytes); }
 

@@ -28,6 +28,9 @@
 #include "base/platform.hpp"
 #include "mem/size_class_pool.hpp"
 
+#if defined(_MSC_VER)
+#include <intrin.h>
+#endif
 #if defined(__SANITIZE_ADDRESS__)
 #define MEM_LOCAL_HEAP_ASAN 1
 #elif defined(__has_feature)
@@ -137,11 +140,20 @@ private:
         Block* partial = nullptr;  // other blocks with a free slot, most recently freed into first
     };
 
+    static BASE_ALWAYS_INLINE unsigned highestBit(std::size_t n) noexcept {
+#if defined(_MSC_VER)
+        unsigned long index = 0;
+        _BitScanReverse64(&index, n);
+        return static_cast<unsigned>(index);
+#else
+        return 63u - static_cast<unsigned>(__builtin_clzll(n));
+#endif
+    }
     static BASE_ALWAYS_INLINE std::size_t classOf(std::size_t bytes) noexcept {
         if (BASE_LIKELY(bytes <= 512))
             return (bytes + kGranule - 1) / kGranule - 1;
         const std::size_t n = bytes - 1;
-        const unsigned msb = 63u - static_cast<unsigned>(__builtin_clzll(n));
+        const unsigned msb = highestBit(n);
         return 32 + (msb - 9) * 4 + ((n >> (msb - 2)) & 3);
     }
     static constexpr std::size_t slotBytesOf(std::size_t cls) noexcept {

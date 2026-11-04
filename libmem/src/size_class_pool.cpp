@@ -98,9 +98,6 @@ SizeClassPool::SizeClassPool(PoolOptions options) : options_(std::move(options))
         entriesBytes_ = e.bytes;
         indexBytes_ = ix.bytes;
         freeSlotsBytes_ = fs.bytes;
-        for (std::size_t i = 0; i < maxLarge; ++i)
-            st->freeSlots[i] = static_cast<std::uint32_t>(maxLarge - 1 - i);   // pops 0,1,2...
-        st->freeSlotCount = maxLarge;
     }
 }
 
@@ -203,7 +200,9 @@ std::size_t SizeClassPool::findLarge(const LargeStripe& st, const void* p) const
 }
 
 std::uint32_t SizeClassPool::insertLarge(LargeStripe& st, const LargeEntry& e) noexcept {
-    const std::uint32_t slot = st.freeSlots[--st.freeSlotCount];
+    // A slot used before if there is one; otherwise the next never-used one, so a table sized for many blocks costs
+    // nothing until they exist.
+    const std::uint32_t slot = st.freeSlotCount ? st.freeSlots[--st.freeSlotCount] : st.freshSlots++;
     st.entries[slot] = e;
     std::size_t i = indexHome(e.ptr);
     while (st.index[i].ptr != nullptr)
