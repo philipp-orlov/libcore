@@ -8,11 +8,13 @@ patterns=(
   'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789\+/'   # base64 alphabet
   'bool +isValidUtf8 *\('                         # UTF-8 validators
   '0x67452301'                                    # SHA-1 initial state
+  '1099511628211'                                 # FNV-1a 64 prime
+  '0xD800'                                        # hand-written UTF-16 surrogate arithmetic (base/utf16.hpp)
 )
 status=0
 for root in "$@"; do
   for p in "${patterns[@]}"; do
-    hits=$(grep -rEn --include='*.cpp' --include='*.hpp' --include='*.h' --include='*.cc' -e "$p" "$root" 2>/dev/null \
+    hits=$(grep -rEin --include='*.cpp' --include='*.hpp' --include='*.h' --include='*.cc' -e "$p" "$root" 2>/dev/null \
            | grep -v '/libbase/' | grep -v '/build' | grep -v '/third_party/' || true)
     if [ -n "$hits" ]; then
       echo "duplicate of a libbase helper (pattern: $p):"

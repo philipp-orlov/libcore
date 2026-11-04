@@ -51,6 +51,12 @@ void vmAdviseHuge(void* p, std::size_t bytes) noexcept;
 // (never written), which is safe on memory another thread or process is already using.
 void vmPrefault(void* p, std::size_t bytes) noexcept;
 
+// For a code generator: flip whole pages between writable and executable, never both at once. vmProtectExecutable
+// also makes the instruction caches see what was written. Both return false when the OS refuses (a hardened kernel
+// policy, for one); the mapping keeps its old protection. `p` must be page aligned.
+bool vmProtectExecutable(void* p, std::size_t bytes) noexcept;
+bool vmProtectWritable(void* p, std::size_t bytes) noexcept;
+
 // Pin pages in RAM (mlock). Returns false when the limit is exceeded or unsupported.
 bool vmLock(void* p, std::size_t bytes) noexcept;
 void vmUnlock(void* p, std::size_t bytes) noexcept;

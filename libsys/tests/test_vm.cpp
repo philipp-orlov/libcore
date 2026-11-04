@@ -22,6 +22,16 @@ TEST(mapIsZeroedPageAlignedAndRounded) {
     sys::vmUnmap(r);
 }
 
+TEST(protectFlipsPagesBetweenWritableAndExecutable) {
+    sys::VmRegion r = sys::vmMap(1);
+    CHECK(sys::vmProtectExecutable(r.base, r.bytes));
+    CHECK_EQ(static_cast<unsigned char*>(r.base)[0], 0);   // still readable
+    CHECK(sys::vmProtectWritable(r.base, r.bytes));
+    static_cast<unsigned char*>(r.base)[0] = 7;
+    CHECK_EQ(static_cast<unsigned char*>(r.base)[0], 7);
+    sys::vmUnmap(r);
+}
+
 TEST(mapAlignedHonoursLargeAlignment) {
     const std::size_t align = std::size_t{2} << 20;
     for (int i = 0; i < 4; ++i) {

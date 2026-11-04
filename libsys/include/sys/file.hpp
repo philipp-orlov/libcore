@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -71,6 +72,10 @@ struct Mapping
 };
 
 std::size_t systemPageSize() noexcept;
+
+/// The whole of a file, for configuration and source text: no store semantics, no lock. Throws base::Error(NotFound)
+/// when it cannot be opened, Internal when it cannot be read.
+std::string readWholeFile(const std::filesystem::path& path);
 
 /// Opens (and, unless readOnly, exclusively locks) the store file.
 /// Pass `lock = false` for side-car files that have a single writer by

@@ -55,10 +55,12 @@ if(CORE_INSTALL)
 "include(CMakeFindDependencyMacro)
 find_dependency(Threads)
 include(\"\${CMAKE_CURRENT_LIST_DIR}/core-targets.cmake\")
+list(APPEND CMAKE_MODULE_PATH \"\${CMAKE_CURRENT_LIST_DIR}\")
 ")
     include(CMakePackageConfigHelpers)
     write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/libcoreConfigVersion.cmake"
                                      VERSION ${PROJECT_VERSION} COMPATIBILITY SameMajorVersion)
     install(FILES "${CMAKE_CURRENT_BINARY_DIR}/libcoreConfig.cmake" "${CMAKE_CURRENT_BINARY_DIR}/libcoreConfigVersion.cmake"
+                  buildkit/cmake/CoreCompiler.cmake buildkit/cmake/CoreSanitize.cmake
             DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/libcore)
 endif()

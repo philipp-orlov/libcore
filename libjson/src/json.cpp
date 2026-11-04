@@ -20,21 +20,8 @@
 #include <utility>
 #include <vector>
 
-// std::to_chars/from_chars for double arrived in libstdc++ 11; the feature
-// macro is the portable way to ask. Without them the number paths fall back to
-// snprintf/strtod in the "C" locale, which allocate nothing. Defining
-// JSON_FP_CHARCONV=0 forces the fallback (its tests do).
-#ifndef JSON_FP_CHARCONV
-#if defined(__cpp_lib_to_chars) && __cpp_lib_to_chars >= 201611L
-#define JSON_FP_CHARCONV 1
-#else
-#define JSON_FP_CHARCONV 0
-#endif
-#endif
-
-#if !JSON_FP_CHARCONV
-#include "base/classic_locale.hpp"
-#endif
+#include "base/ascii.hpp"
+#include "base/number.hpp"
 
 // GCC's -Wmaybe-uninitialized has a known false-positive pattern with
 // std::variant when one alternative is a container of the enclosing type
@@ -345,37 +332,6 @@ struct Writer
     }
 };
 
-#if !JSON_FP_CHARCONV
-// The shortest of 15, 16 and 17 significant digits that reads back as the
-// same double; 17 always does.
-size_t formatDouble(double value, char* buffer, size_t size)
-{
-    base::ClassicLocale classic;
-    int length = 0;
-    for (int precision = 15; precision <= 17; ++precision) {
-        length = std::snprintf(buffer, size, "%.*g", precision, value);
-        if (precision == 17 || std::strtod(buffer, nullptr) == value)
-            break;
-    }
-    return length > 0 ? static_cast<size_t>(length) : 0;
-}
-
-// `text` is a validated JSON number token of at most 128 characters.
-bool parseDouble(std::string_view text, double& value)
-{
-    char token[130];
-    std::memcpy(token, text.data(), text.size());
-    token[text.size()] = '\0';
-    base::ClassicLocale classic;
-    char* end = nullptr;
-    errno = 0;
-    value = std::strtod(token, &end);
-    // ERANGE also flags a subnormal result, which from_chars accepts; only an
-    // underflow to zero (and an overflow, which is not finite) is refused.
-    return end == token + text.size() && !(errno == ERANGE && value == 0);
-}
-#endif
-
 template <typename Sink>
 void putEscaped(Sink& sink, std::string_view text)
 {
@@ -435,12 +391,7 @@ void putNumber(Sink& sink, double value)
             return;
         }
     }
-#if JSON_FP_CHARCONV
-    const auto formatted = std::to_chars(buffer, buffer + sizeof buffer, value);
-    sink.put(buffer, static_cast<size_t>(formatted.ptr - buffer));
-#else
-    sink.put(buffer, formatDouble(value, buffer, sizeof buffer));
-#endif
+    sink.put(buffer, base::formatShortest(value, buffer));
 }
 
 template <typename Sink>
@@ -654,19 +605,12 @@ private:
             }
         }
         double value = 0;
-#if JSON_FP_CHARCONV
-        // The scanner above has already proved the token is a JSON number, so
-        // from_chars cannot wander into "inf"/"nan"; it is used here mainly
-        // because it allocates nothing, unlike the stringstream it replaced.
-        const char* first = text_.data() + start;
-        const char* last = text_.data() + pos_;
-        const auto parsed = std::from_chars(first, last, value);
-        if (parsed.ec != std::errc() || parsed.ptr != last || !std::isfinite(value))
+        // The scanner above has already proved the token is a JSON number, so this cannot wander into "inf"/"nan".
+        const std::string_view token = text_.substr(start, pos_ - start);
+        const base::ParsedDouble parsed = base::parseDouble(token);
+        if (parsed.outOfRange || parsed.consumed != token.size() || !std::isfinite(parsed.value))
             return fail(error, "number outside finite range");
-#else
-        if (!parseDouble(text_.substr(start, pos_ - start), value) || !std::isfinite(value))
-            return fail(error, "number outside finite range");
-#endif
+        value = parsed.value;
         out = Json(value);
         return true;
     }
@@ -680,14 +624,10 @@ private:
         for (int i = 0; i < 4; ++i) {
             char c = text_[pos_ + i];
             value <<= 4;
-            if (c >= '0' && c <= '9')
-                value |= static_cast<uint32_t>(c - '0');
-            else if (c >= 'a' && c <= 'f')
-                value |= static_cast<uint32_t>(c - 'a' + 10);
-            else if (c >= 'A' && c <= 'F')
-                value |= static_cast<uint32_t>(c - 'A' + 10);
-            else
+            const int digit = base::hexValue(c);
+            if (digit < 0)
                 return fail(error, "invalid hex digit in \\u escape");
+            value |= static_cast<uint32_t>(digit);
         }
         pos_ += 4;
         out = value;

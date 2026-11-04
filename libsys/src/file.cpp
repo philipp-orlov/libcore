@@ -4,14 +4,17 @@
 #include "sys/file.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <new>
 #include <string>
 #include <vector>
 
 #include "base/status.hpp"
+#include "sys/errno.hpp"
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -781,6 +784,23 @@ void flushData(FileHandle fd, const Mapping& mapping,
     (void)pageSize;
 #endif
     syncFile(fd, false);
+}
+
+std::string readWholeFile(const std::filesystem::path& path) {
+    std::unique_ptr<std::FILE, int (*)(std::FILE*)> file(std::fopen(path.string().c_str(), "rb"), &std::fclose);
+    if (!file)
+        throw base::Error(base::Code::NotFound, errnoMessage(("open " + path.string()).c_str(), errno), static_cast<std::uint32_t>(errno));
+    std::string text;
+    char buffer[16384];
+    for (;;) {
+        const std::size_t got = std::fread(buffer, 1, sizeof buffer, file.get());
+        text.append(buffer, got);
+        if (got < sizeof buffer)
+            break;
+    }
+    if (std::ferror(file.get()))
+        throw base::Error(base::Code::Internal, "cannot read " + path.string());
+    return text;
 }
 
 }  // namespace sys

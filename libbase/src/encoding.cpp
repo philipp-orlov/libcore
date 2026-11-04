@@ -3,6 +3,8 @@
 
 #include "base/encoding.hpp"
 
+#include "base/ascii.hpp"
+
 #include <array>
 
 namespace base {
@@ -128,18 +130,9 @@ void hexEncode(const void* data, std::size_t len, char* out) noexcept {
 bool hexDecode(std::string_view in, void* out, std::size_t* written) noexcept {
     if (in.size() % 2 != 0)
         return false;
-    auto digit = [](char c) -> int {
-        if (c >= '0' && c <= '9')
-            return c - '0';
-        if (c >= 'a' && c <= 'f')
-            return c - 'a' + 10;
-        if (c >= 'A' && c <= 'F')
-            return c - 'A' + 10;
-        return -1;
-    };
     auto* o = static_cast<std::uint8_t*>(out);
     for (std::size_t i = 0; i < in.size(); i += 2) {
-        const int hi = digit(in[i]), lo = digit(in[i + 1]);
+        const int hi = hexValue(in[i]), lo = hexValue(in[i + 1]);
         if (hi < 0 || lo < 0)
             return false;
         *o++ = static_cast<std::uint8_t>(hi << 4 | lo);

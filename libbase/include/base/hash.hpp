@@ -25,6 +25,21 @@ constexpr uint32_t fnv1a32(std::string_view text) noexcept {
 // Not for untrusted input that must resist collision attacks, and not stable across versions: never persist it.
 uint64_t hashBytes64(const void* data, std::size_t size) noexcept;
 
+// Mixes a pointer into a table index. The low bits of an aligned pointer never vary, so they are dropped first.
+inline std::size_t hashPointer(const void* p) noexcept {
+    uint64_t v = static_cast<uint64_t>(reinterpret_cast<std::uintptr_t>(p)) >> 4;
+    v *= 0x9E3779B97F4A7C15ull;
+    return static_cast<std::size_t>(v ^ (v >> 29));
+}
+
+// Smallest power of two >= n, and at least `minimum` (itself a power of two): the size of an open-addressed table.
+constexpr std::size_t tableSizeFor(std::size_t n, std::size_t minimum = 8) noexcept {
+    std::size_t size = minimum;
+    while (size < n)
+        size *= 2;
+    return size;
+}
+
 // SHA-1 (RFC 3174). Kept only because RFC 6455 mandates it for the WebSocket handshake; not for security.
 class Sha1 {
 public:

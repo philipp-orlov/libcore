@@ -157,6 +157,20 @@ void vmPrefault(void* p, std::size_t bytes) noexcept {
 bool vmLock(void* p, std::size_t bytes) noexcept { return ::mlock(p, bytes) == 0; }
 void vmUnlock(void* p, std::size_t bytes) noexcept { (void)::munlock(p, bytes); }
 
+bool vmProtectExecutable(void* p, std::size_t bytes) noexcept {
+    if (::mprotect(p, bytes, PROT_READ | PROT_EXEC) != 0)
+        return false;
+#if defined(__GNUC__)
+    // arm64 has separate instruction and data caches; on x86 the builtin compiles to nothing.
+    __builtin___clear_cache(static_cast<char*>(p), static_cast<char*>(p) + bytes);
+#endif
+    return true;
+}
+
+bool vmProtectWritable(void* p, std::size_t bytes) noexcept {
+    return ::mprotect(p, bytes, PROT_READ | PROT_WRITE) == 0;
+}
+
 #else  // ---- Windows ----
 
 std::size_t pageSize() noexcept {
@@ -230,6 +244,19 @@ void vmPrefault(void* p, std::size_t bytes) noexcept {
 }
 bool vmLock(void* p, std::size_t bytes) noexcept { return ::VirtualLock(p, bytes) != 0; }
 void vmUnlock(void* p, std::size_t bytes) noexcept { (void)::VirtualUnlock(p, bytes); }
+
+bool vmProtectExecutable(void* p, std::size_t bytes) noexcept {
+    DWORD previous = 0;
+    if (!VirtualProtect(p, bytes, PAGE_EXECUTE_READ, &previous))
+        return false;
+    FlushInstructionCache(GetCurrentProcess(), p, bytes);
+    return true;
+}
+
+bool vmProtectWritable(void* p, std::size_t bytes) noexcept {
+    DWORD previous = 0;
+    return VirtualProtect(p, bytes, PAGE_READWRITE, &previous) != 0;
+}
 
 #endif
 

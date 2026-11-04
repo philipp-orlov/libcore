@@ -23,11 +23,11 @@ if(CORE_BUILD_TESTS)
 
     # The same parser on the snprintf/strtod path of a standard library without floating-point <charconv>
     # (libstdc++ before 11, e.g. GCC 9 on JetPack 5).
-    add_executable(json_test_fallback tests/test_json.cpp src/json.cpp)
+    add_executable(json_test_fallback tests/test_json.cpp src/json.cpp ${CMAKE_SOURCE_DIR}/libbase/src/number.cpp)
     target_include_directories(json_test_fallback PRIVATE include)
     target_link_libraries(json_test_fallback PRIVATE core::base)
     target_compile_features(json_test_fallback PRIVATE cxx_std_17)
-    target_compile_definitions(json_test_fallback PRIVATE JSON_FP_CHARCONV=0)
+    target_compile_definitions(json_test_fallback PRIVATE BASE_FP_CHARCONV=0)
     add_test(NAME json_fallback COMMAND json_test_fallback)
 
     add_executable(json_fuzz fuzz/fuzz_json.cpp fuzz/fuzz_driver.cpp)
