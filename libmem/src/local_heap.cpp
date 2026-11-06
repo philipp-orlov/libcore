@@ -273,6 +273,29 @@ void LocalHeap::trim() noexcept {
     }
 }
 
+void LocalHeap::forEachSlot(void (*visit)(void* context, void* slot), void* context) const {
+    constexpr std::size_t kMaxSlots = kBlockBytes / kGranule;
+    for (const Segment* segment = segments_; segment; segment = segment->nextAll) {
+        std::uint32_t used = ~segment->freeMask & kAllBlocks;
+        while (used) {
+            const unsigned index = lowestBit(used);
+            used &= used - 1;
+            auto* block = reinterpret_cast<Block*>(reinterpret_cast<std::uintptr_t>(segment) + index * kBlockBytes);
+            char* first = reinterpret_cast<char*>(block) + kBlockHeader;
+            const std::size_t carved = static_cast<std::size_t>(block->bump - first) / block->slotBytes;
+            std::uint64_t isFree[kMaxSlots / 64 + 1] = {};
+            for (const Slot* slot = block->free; slot; slot = slot->next) {
+                const std::size_t at = static_cast<std::size_t>(reinterpret_cast<const char*>(slot) - first) / block->slotBytes;
+                isFree[at / 64] |= std::uint64_t{1} << (at % 64);
+            }
+            for (std::size_t at = 0; at < carved; ++at) {
+                if (!(isFree[at / 64] >> (at % 64) & 1))
+                    visit(context, first + at * block->slotBytes);
+            }
+        }
+    }
+}
+
 LocalHeap::Stats LocalHeap::stats() const noexcept {
     Stats s;
     s.mappedBytes = segmentCount_ * kSegmentBytes;

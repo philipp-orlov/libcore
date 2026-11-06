@@ -113,6 +113,11 @@ public:
     // Gives memory back to the OS; see above. Call at a point where a few system calls do not matter.
     void trim() noexcept;
     Stats stats() const noexcept;
+    // Calls visit(context, slot) for every small slot handed out and not given back, block by block, so in address order
+    // within a block. Requests above kMaxSmall are not in blocks and are not seen. Nothing may be allocated or freed while
+    // it runs. Costs the blocks in use plus their free slots: an owner that wants to enumerate what it has needs no list
+    // of its own, and no space in each object for one.
+    void forEachSlot(void (*visit)(void* context, void* slot), void* context) const;
     // The usable size of a request: what a slot really holds.
     static std::size_t usableSize(std::size_t bytes) noexcept { return bytes && bytes <= kMaxSmall ? slotBytesOf(classOf(bytes)) : bytes; }
 

@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Philipp Orlov
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <random>
@@ -201,6 +202,29 @@ TEST(largeRequestsGoToThePoolOrTheOs) {
     void* z = heap.allocate(0);
     heap.deallocate(z, 0);
     CHECK_EQ(heap.stats().largeBytes, 0u);
+}
+
+TEST(forEachSlotSeesWhatIsOutAndNothingElse) {
+    mem::LocalHeap heap;
+    std::vector<void*> out;
+    for (std::size_t i = 0; i < 20000; ++i)
+        out.push_back(heap.allocate(16 + i % 300));
+    std::vector<void*> kept;
+    for (std::size_t i = 0; i < out.size(); ++i) {
+        if (i % 3 == 0)
+            kept.push_back(out[i]);
+        else
+            heap.deallocate(out[i], 16 + i % 300);
+    }
+    void* big = heap.allocate(mem::LocalHeap::kMaxSmall + 1);
+    std::vector<void*> seen;
+    heap.forEachSlot([](void* list, void* slot) { static_cast<std::vector<void*>*>(list)->push_back(slot); }, &seen);
+    std::sort(seen.begin(), seen.end());
+    std::sort(kept.begin(), kept.end());
+    CHECK(seen == kept);
+    heap.deallocate(big, mem::LocalHeap::kMaxSmall + 1);
+    for (std::size_t i = 0; i < out.size(); i += 3)
+        heap.deallocate(out[i], 16 + i % 300);
 }
 
 int main() { return tst::runAll("local_heap"); }
