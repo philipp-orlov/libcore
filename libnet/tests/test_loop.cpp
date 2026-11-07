@@ -130,4 +130,56 @@ TEST(echoServerOverTheLoop) {
     });
 }
 
+// Data and the peer's FIN that arrive before the first read: a short read takes the data, and the read after it has to
+// see the end, though epoll (edge-triggered) reported both in one event that has already been handled.
+TEST(endOfStreamThatArrivedWithTheDataIsSeen) {
+    Loop l;
+    const uint16_t port = freePort();
+    std::unique_ptr<net::TcpListener> listener;
+    std::shared_ptr<net::TcpConnection> connection;   // loop thread only
+    std::promise<void> acceptedPromise;
+    onLoop(l.loop, [&] {
+        listener = std::make_unique<net::TcpListener>(l.loop, "127.0.0.1", port, false);
+        listener->asyncAccept([&](net::socket_t fd) {
+            connection = std::make_shared<net::TcpConnection>(l.loop, fd);
+            acceptedPromise.set_value();
+        });
+    });
+    int s = ::socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in a{};
+    a.sin_family = AF_INET;
+    a.sin_port = htons(port);
+    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    CHECK_EQ(::connect(s, reinterpret_cast<sockaddr*>(&a), sizeof a), 0);
+    acceptedPromise.get_future().wait();
+    CHECK_EQ(::send(s, "hello", 5, 0), 5);
+    ::shutdown(s, SHUT_WR);
+    std::this_thread::sleep_for(100ms);  // both are in, and the loop has seen their event with no read waiting
+
+    std::promise<size_t> first;
+    std::promise<bool> second;
+    onLoop(l.loop, [&] {
+        connection->asyncRead(nullptr, 0, [&](net::IoResult r) {
+            first.set_value(r.ok ? r.bytes : 0);
+            connection->asyncRead(nullptr, 0, [&](net::IoResult end) { second.set_value(end.ok && end.bytes == 0); });
+        });
+    });
+    auto firstResult = first.get_future();
+    CHECK(firstResult.wait_for(2s) == std::future_status::ready);
+    CHECK_EQ(firstResult.get(), size_t{5});
+    auto secondResult = second.get_future();
+    const bool ended = secondResult.wait_for(2s) == std::future_status::ready;
+    CHECK(ended);
+    if (ended)
+        CHECK(secondResult.get());
+    ::close(s);
+    onLoop(l.loop, [&] {
+        if (connection)
+            connection->close();
+        connection.reset();
+        listener->close();
+        listener.reset();
+    });
+}
+
 int main() { return tst::runAll("net_loop"); }

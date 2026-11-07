@@ -433,6 +433,9 @@ struct TcpConnection::Impl : EpollHandler
     bool readable = true;
     bool writable = true;
     bool deferred = false;
+    // epoll has reported the peer's end. A short read then does not mean there is nothing left: the end is still to be
+    // read, and with edge triggering no new event would say so.
+    bool peerHungUp = false;
 
     unsigned char* readBuf = nullptr;
     size_t readCap = 0;
@@ -491,7 +494,7 @@ struct TcpConnection::Impl : EpollHandler
             n = ::recv(fd, target, capacity, 0);
         } while (n < 0 && errno == EINTR);
         if (n >= 0) {
-            if (static_cast<size_t>(n) < capacity)
+            if (static_cast<size_t>(n) < capacity && !peerHungUp)
                 readable = false;
 
             readPending = false;
@@ -567,6 +570,8 @@ struct TcpConnection::Impl : EpollHandler
         // for a pending operation to run into that.
         if (events & (EPOLLIN | EPOLLRDHUP | EPOLLHUP | EPOLLERR))
             readable = true;
+        if (events & (EPOLLRDHUP | EPOLLHUP))
+            peerHungUp = true;
 
         if (events & (EPOLLOUT | EPOLLHUP | EPOLLERR))
             writable = true;
