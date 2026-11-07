@@ -138,6 +138,23 @@ private:
     };
     static_assert(sizeof(Block) <= 64, "a block's header must stay on one cache line");
     static constexpr std::size_t kBlockHeader = 64;
+
+public:
+    // For a code generator that pops a slot itself, which is all allocate does while the current block has a free slot:
+    //   block = *currentBlockOf(bytes); slot = block->free; if (!slot) call allocate instead;
+    //   block->free = *(void**)slot; ++block->live   (32 bits)
+    // The place stays where it is for as long as the heap does, and what is in it changes.
+    static constexpr bool kCanPopInline =
+#if defined(MEM_LOCAL_HEAP_ASAN)
+        false;  // a slot has to be unpoisoned
+#else
+        true;
+#endif
+    static constexpr std::size_t kBlockFreeOffset = offsetof(Block, free);
+    static constexpr std::size_t kBlockLiveOffset = offsetof(Block, live);
+    Block* const* currentBlockOf(std::size_t bytes) const noexcept { return &classes_[classOf(bytes)].current; }
+
+private:
     static constexpr std::size_t kClassCount = 48;  // 32 at 16-byte steps up to 512, then four per doubling
 
     struct Class {
