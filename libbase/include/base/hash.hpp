@@ -57,6 +57,23 @@ private:
     uint32_t fill_;
 };
 
+// SHA-256 (FIPS 180-4), for digests that must resist collisions and preimages: stored secrets, content addresses.
+class Sha256 {
+public:
+    Sha256() noexcept { reset(); }
+    void reset() noexcept;
+    void update(const void* data, std::size_t size) noexcept;
+    void finish(uint8_t out[32]) noexcept;  // the object must be reset() before reuse
+    static void digest(const void* data, std::size_t size, uint8_t out[32]) noexcept;
+
+private:
+    void block(const uint8_t* p) noexcept;
+    uint32_t h_[8];
+    uint8_t buf_[64];
+    uint64_t bytes_;
+    uint32_t fill_;
+};
+
 // CRC32C (Castagnoli) of `size` bytes, continuing from `crc` (the CRC of the preceding bytes, 0 to start).
 // Uses the CPU's CRC instructions (SSE4.2 on x86-64, the ARMv8 CRC extension) when the running CPU has them,
 // decided once at the first call; otherwise a table-driven loop. Results are identical.

@@ -16,6 +16,44 @@ TEST(fnv1aMatchesPublishedVectors) {
     CHECK_EQ(base::fnv1a32("test.everything.Child"), base::fnv1a32(std::string("test.everything.Child")));
 }
 
+namespace {
+std::string sha256Hex(const std::string& text) {
+    uint8_t digest[32];
+    base::Sha256::digest(text.data(), text.size(), digest);
+    static constexpr char kHex[] = "0123456789abcdef";
+    std::string out;
+    for (const uint8_t b : digest) {
+        out.push_back(kHex[b >> 4]);
+        out.push_back(kHex[b & 15]);
+    }
+    return out;
+}
+}  // namespace
+
+TEST(sha256MatchesFipsVectors) {
+    CHECK_EQ(sha256Hex(""), std::string("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"));
+    CHECK_EQ(sha256Hex("abc"), std::string("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"));
+    CHECK_EQ(sha256Hex("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
+             std::string("248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"));
+    CHECK_EQ(sha256Hex(std::string(1000000, 'a')),
+             std::string("cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"));
+}
+
+TEST(sha256StreamedInPiecesMatchesOneShot) {
+    std::string text;
+    for (int i = 0; i < 1000; ++i)
+        text.push_back(static_cast<char>(i * 7));
+    for (const std::size_t piece : {1u, 3u, 63u, 64u, 65u, 200u}) {
+        base::Sha256 hasher;
+        for (std::size_t at = 0; at < text.size(); at += piece)
+            hasher.update(text.data() + at, std::min(piece, text.size() - at));
+        uint8_t streamed[32], oneShot[32];
+        hasher.finish(streamed);
+        base::Sha256::digest(text.data(), text.size(), oneShot);
+        CHECK(std::memcmp(streamed, oneShot, 32) == 0);
+    }
+}
+
 TEST(crc32cMatchesKnownVectors) {
     CHECK_EQ(base::crc32c("123456789", 9), 0xe3069283u);
     CHECK_EQ(base::crc32cPortable("123456789", 9), 0xe3069283u);
