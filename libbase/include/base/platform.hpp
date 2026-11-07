@@ -5,6 +5,11 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
+
+#if defined(_MSC_VER) && !defined(__clang__)
+#include <intrin.h>
+#endif
 
 #if defined(_WIN32)
 #define BASE_OS_WINDOWS 1
@@ -44,6 +49,35 @@ inline constexpr std::size_t kCacheLine = 128;
 #else
 inline constexpr std::size_t kCacheLine = 64;
 #endif
+
+// Bit scans. The argument of the first two must not be zero.
+inline unsigned countTrailingZeros(std::uint64_t value) noexcept {
+#if defined(_MSC_VER) && !defined(__clang__)
+    unsigned long index;
+    _BitScanForward64(&index, value);
+    return static_cast<unsigned>(index);
+#else
+    return static_cast<unsigned>(__builtin_ctzll(value));
+#endif
+}
+
+inline unsigned countLeadingZeros(std::uint64_t value) noexcept {
+#if defined(_MSC_VER) && !defined(__clang__)
+    unsigned long index;
+    _BitScanReverse64(&index, value);
+    return 63u - static_cast<unsigned>(index);
+#else
+    return static_cast<unsigned>(__builtin_clzll(value));
+#endif
+}
+
+inline unsigned popCount(std::uint64_t value) noexcept {
+#if defined(_MSC_VER) && !defined(__clang__)
+    return static_cast<unsigned>(__popcnt64(value));
+#else
+    return static_cast<unsigned>(__builtin_popcountll(value));
+#endif
+}
 
 // A hint inside spin loops: x86 `pause`, ARM `yield`.
 inline void cpuRelax() noexcept {

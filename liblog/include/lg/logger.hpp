@@ -38,6 +38,12 @@ struct LoggerOptions {
     std::chrono::milliseconds idlePoll{5};
 };
 
+#if defined(__GNUC__) || defined(__clang__)
+#define LG_PRINTF_FORMAT(fmtIndex, firstArg) __attribute__((format(printf, fmtIndex, firstArg)))
+#else
+#define LG_PRINTF_FORMAT(fmtIndex, firstArg)
+#endif
+
 class Logger {
 public:
     explicit Logger(LoggerOptions options = {});
@@ -51,7 +57,7 @@ public:
     Level level() const noexcept { return static_cast<Level>(level_.load(std::memory_order_relaxed)); }
     bool enabled(Level level) const noexcept { return static_cast<std::uint8_t>(level) >= level_.load(std::memory_order_relaxed); }
 
-    void write(Level level, const char* fmt, ...) noexcept __attribute__((format(printf, 3, 4)));
+    void write(Level level, const char* fmt, ...) noexcept LG_PRINTF_FORMAT(3, 4);
     void writeV(Level level, const char* fmt, va_list args) noexcept;
     void writeRaw(Level level, std::string_view message) noexcept;   // no formatting
 

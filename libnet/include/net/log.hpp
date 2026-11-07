@@ -9,7 +9,11 @@ namespace net {
 enum class LogLevel { Warn, Error };
 using LogHook = void (*)(LogLevel level, const char* message);
 void setLogHook(LogHook hook) noexcept;
+#if defined(__GNUC__) || defined(__clang__)
 void log(LogLevel level, const char* format, ...) noexcept __attribute__((format(printf, 2, 3)));
+#else
+void log(LogLevel level, const char* format, ...) noexcept;
+#endif
 
 }  // namespace net
 

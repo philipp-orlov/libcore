@@ -16,19 +16,18 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 # One directory per future repository; each is self-contained and depends only on the ones before it.
-add_subdirectory(libbase)
-add_subdirectory(libsys)
-add_subdirectory(libmem)
-add_subdirectory(libsched)
-add_subdirectory(liblog)
-add_subdirectory(libtar)
-add_subdirectory(libcfg)
-add_subdirectory(libschema)
-add_subdirectory(libjson)
-add_subdirectory(libhw)
-add_subdirectory(libdev)
-add_subdirectory(libnet)
-add_subdirectory(libbench)
+#
+# Inside another project, a component is built when something links it and not merely because it exists: a consumer of
+# core::sys has no use for the hardware probes or the CUDA driver wrapper, and on a platform where those do not build
+# (Windows, so far) must not fail on them. libcore built on its own still builds everything.
+if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
+    set(CORE_SUBDIR_OPTIONS "")
+else()
+    set(CORE_SUBDIR_OPTIONS EXCLUDE_FROM_ALL)
+endif()
+foreach(component base sys mem sched log tar cfg schema json hw dev net bench)
+    add_subdirectory(lib${component} ${CORE_SUBDIR_OPTIONS})
+endforeach()
 
 # ---- install and export ------------------------------------------------------------------------------------------
 # `find_package(libcore CONFIG)` then link core::base, core::sys, core::mem, ...

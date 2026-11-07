@@ -7,6 +7,7 @@
 #include <stdexcept>
 
 #include "base/status.hpp"
+#include "base/platform.hpp"
 
 namespace mem {
 
@@ -18,7 +19,7 @@ std::size_t ceilPow2(std::size_t v) {
     return p;
 }
 inline unsigned log2Floor(std::size_t v) noexcept {
-    return static_cast<unsigned>(8 * sizeof(unsigned long long) - 1 - static_cast<unsigned>(__builtin_clzll(v)));
+    return static_cast<unsigned>(8 * sizeof(unsigned long long) - 1 - base::countLeadingZeros(v));
 }
 }  // namespace
 

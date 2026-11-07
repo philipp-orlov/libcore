@@ -15,7 +15,13 @@ namespace {
 
 std::string errnoMessage(int e) {
     char buffer[128] = {};
+#if defined(_WIN32)
+    if (::strerror_s(buffer, sizeof buffer, e) != 0)
+        return "unknown error";
+    return std::string(buffer);
+#else
     return std::string(pick(::strerror_r(e, buffer, sizeof buffer), buffer));
+#endif
 }
 
 std::string errnoMessage(const char* what, int e) {

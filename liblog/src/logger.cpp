@@ -319,7 +319,11 @@ struct TimePrefix {
             return;
         second = sec;
         std::tm tm{};
+#if defined(_WIN32)
+        if (utc) gmtime_s(&tm, &sec); else localtime_s(&tm, &sec);
+#else
         if (utc) gmtime_r(&sec, &tm); else localtime_r(&sec, &tm);
+#endif
         std::snprintf(text, sizeof text, "%04d-%02d-%02d %02d:%02d:%02d", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
                       tm.tm_hour, tm.tm_min, tm.tm_sec);
     }

@@ -175,7 +175,7 @@ private:
         _BitScanReverse64(&index, n);
         return static_cast<unsigned>(index);
 #else
-        return 63u - static_cast<unsigned>(__builtin_clzll(n));
+        return 63u - base::countLeadingZeros(n);
 #endif
     }
     static BASE_ALWAYS_INLINE std::size_t classOf(std::size_t bytes) noexcept {

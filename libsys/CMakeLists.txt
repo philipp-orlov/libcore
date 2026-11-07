@@ -1,4 +1,9 @@
-add_library(core_sys STATIC src/errno.cpp src/vm.cpp src/wait.cpp src/proc.cpp src/cpu.cpp src/process.cpp src/file.cpp src/net.cpp src/shm.cpp)
+add_library(core_sys STATIC src/errno.cpp src/vm.cpp src/wait.cpp src/proc.cpp src/cpu.cpp src/file.cpp src/net.cpp)
+# sys::Process (fork/exec, poll) and sys::SharedMemory (memfd, mmap) are POSIX only. Windows programs start children
+# with CreateProcess themselves.
+if(NOT WIN32)
+    target_sources(core_sys PRIVATE src/process.cpp src/shm.cpp)
+endif()
 add_library(core::sys ALIAS core_sys)
 target_include_directories(core_sys PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 target_compile_features(core_sys PUBLIC cxx_std_17)
@@ -7,7 +12,11 @@ target_link_libraries(core_sys PUBLIC core::base Threads::Threads)
 core_target_defaults(core_sys)
 
 if(CORE_BUILD_TESTS)
-    foreach(t vm wait cpu process net shm)
+    set(sys_tests vm wait cpu net)
+    if(NOT WIN32)
+        list(APPEND sys_tests process shm)
+    endif()
+    foreach(t ${sys_tests})
         add_executable(sys_test_${t} tests/test_${t}.cpp)
         target_link_libraries(sys_test_${t} PRIVATE core::sys)
         target_include_directories(sys_test_${t} PRIVATE ${CMAKE_SOURCE_DIR}/libbase/tests)

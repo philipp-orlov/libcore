@@ -172,11 +172,17 @@ public:
     void parseFile(const std::string& path, bool main) {
         std::string canonical = path;
         {
+#if defined(_WIN32)
+            char resolved[4096];
+            if (::_fullpath(resolved, path.c_str(), sizeof resolved))
+                canonical = resolved;
+#else
             char* real = ::realpath(path.c_str(), nullptr);
             if (real) {
                 canonical = real;
                 std::free(real);
             }
+#endif
         }
         if (!seen_.insert(canonical).second)
             return;

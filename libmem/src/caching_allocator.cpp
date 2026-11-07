@@ -9,6 +9,7 @@
 
 #include "base/status.hpp"
 #include "sys/vm.hpp"
+#include "base/platform.hpp"
 
 namespace mem {
 
@@ -171,7 +172,7 @@ struct CachingAllocator::Impl {
             if (w == (b >> 6))
                 bits &= ~std::uint64_t{0} << (b & 63);
             while (bits) {
-                const std::size_t bin = w * 64 + static_cast<std::size_t>(__builtin_ctzll(bits));
+                const std::size_t bin = w * 64 + static_cast<std::size_t>(base::countTrailingZeros(bits));
                 // A bin above need's bin holds only blocks that fit, and they differ by less than a granule.
                 if (bin != b && bin != pool.bins - 1)
                     return pool.heads[bin];

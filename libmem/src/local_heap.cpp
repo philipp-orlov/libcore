@@ -6,6 +6,7 @@
 #include <algorithm>
 
 #include "sys/vm.hpp"
+#include "base/platform.hpp"
 
 namespace mem {
 
@@ -38,8 +39,8 @@ unsigned lowestBit(std::uint32_t mask) noexcept {
 }
 unsigned bitCount(std::uint32_t mask) noexcept { return static_cast<unsigned>(__popcnt(mask)); }
 #else
-unsigned lowestBit(std::uint32_t mask) noexcept { return static_cast<unsigned>(__builtin_ctz(mask)); }
-unsigned bitCount(std::uint32_t mask) noexcept { return static_cast<unsigned>(__builtin_popcount(mask)); }
+unsigned lowestBit(std::uint32_t mask) noexcept { return base::countTrailingZeros(mask); }
+unsigned bitCount(std::uint32_t mask) noexcept { return base::popCount(mask); }
 #endif
 
 unsigned blockIndex(const void* block) noexcept {

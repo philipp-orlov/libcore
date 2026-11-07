@@ -11,6 +11,18 @@
 #include <sys/syscall.h>
 #include <time.h>
 #include <unistd.h>
+#elif defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <synchapi.h>
+
+#include <algorithm>
+#pragma comment(lib, "Synchronization.lib")
 #else
 #include <thread>
 #endif
@@ -49,15 +61,6 @@ void wakeAll(std::atomic<std::uint32_t>& word) noexcept {
 }
 
 #elif defined(_WIN32)   // NOT BUILT OR RUN on this machine: WaitOnAddress (Windows 8+, needs Synchronization.lib).
-
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#pragma comment(lib, "Synchronization.lib")
 
 WaitResult waitOnAddress(std::atomic<std::uint32_t>& word, std::uint32_t expected, std::chrono::nanoseconds timeout) noexcept {
     if (word.load(std::memory_order_acquire) != expected)

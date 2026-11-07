@@ -11,6 +11,7 @@
 #include <new>
 #include <type_traits>
 #include <utility>
+#include <memory>
 
 namespace base {
 
@@ -72,9 +73,9 @@ private:
         [](void* p, Args&&... args) -> R { return (*static_cast<D*>(p))(std::forward<Args>(args)...); },
         [](void* from, void* to) noexcept {
             ::new (to) D(std::move(*static_cast<D*>(from)));
-            static_cast<D*>(from)->~D();
+            std::destroy_at(static_cast<D*>(from));
         },
-        [](void* p) noexcept { static_cast<D*>(p)->~D(); }};
+        [](void* p) noexcept { std::destroy_at(static_cast<D*>(p)); }};
 
     void moveFrom(InlineFunction& other) noexcept {
         if (other.ops_) {
