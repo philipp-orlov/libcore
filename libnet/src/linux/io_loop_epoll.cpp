@@ -84,6 +84,7 @@ struct SyncDepth
 };
 }  // namespace
 
+
 struct IoLoop::Impl
 {
     Impl(size_t taskCapacity, size_t timerCapacity) : tasks(taskCapacity), timers(timerCapacity)
@@ -123,6 +124,9 @@ struct IoLoop::Impl
     // completion callback, say), kept alive until the round has finished.
     std::vector<std::shared_ptr<void>> graveyard;
     std::unique_ptr<unsigned char[]> receiveBuffer{new unsigned char[kReceiveBufferBytes]};
+    // While a callback is handed receiveBuffer: a read nested in it (a TLS stream pumped by a send from that callback,
+    // say) must not recv into the bytes the callback is still consuming, so it waits for the loop's top level.
+    bool receiveBufferBusy = false;
 
     uint64_t registerHandler(EpollHandler* handler)
     {
@@ -398,6 +402,26 @@ bool IoLoop::refreshTimer(uint64_t id, std::chrono::milliseconds delay)
 // TcpConnection
 // ---------------------------------------------------------------------
 
+// Marks the loop's receive buffer as being consumed for a scope (see IoLoop::Impl::receiveBufferBusy).
+struct ReceiveBufferUse
+{
+    ReceiveBufferUse(IoLoop::Impl& loop, bool active) : loop_(active ? &loop : nullptr)
+    {
+        if (loop_)
+            loop_->receiveBufferBusy = true;
+    }
+    ~ReceiveBufferUse()
+    {
+        if (loop_)
+            loop_->receiveBufferBusy = false;
+    }
+    ReceiveBufferUse(const ReceiveBufferUse&) = delete;
+    ReceiveBufferUse& operator=(const ReceiveBufferUse&) = delete;
+
+private:
+    IoLoop::Impl* loop_;
+};
+
 struct TcpConnection::Impl : EpollHandler
 {
     IoLoop& loop;
@@ -453,6 +477,13 @@ struct TcpConnection::Impl : EpollHandler
         if (!readPending || closed || !readable)
             return;
 
+        if (!readBuf && loop.impl()->receiveBufferBusy) {
+            if (!deferred) {
+                deferred = true;
+                loop.impl()->defer(*this);
+            }
+            return;
+        }
         unsigned char* target = readBuf ? readBuf : loop.impl()->receiveBuffer.get();
         const size_t capacity = readBuf ? readCap : kReceiveBufferBytes;
         ssize_t n;
@@ -467,6 +498,7 @@ struct TcpConnection::Impl : EpollHandler
             auto callback = std::move(readCallback);
             readCallback = nullptr;
             SyncDepth depth;
+            ReceiveBufferUse use(*loop.impl(), !readBuf);
             callback(IoResult{static_cast<size_t>(n), true, 0, target});
         } else {
             int err = errno;
