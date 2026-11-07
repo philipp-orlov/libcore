@@ -140,9 +140,13 @@ private:
     static constexpr std::size_t kBlockHeader = 64;
 
 public:
-    // For a code generator that pops a slot itself, which is all allocate does while the current block has a free slot:
-    //   block = *currentBlockOf(bytes); slot = block->free; if (!slot) call allocate instead;
-    //   block->free = *(void**)slot; ++block->live   (32 bits)
+    // For a code generator that pops a slot itself, which is all allocate does while the current block has a free slot or
+    // one not yet carved:
+    //   block = *currentBlockOf(bytes); slot = block->free;
+    //   if (slot) block->free = *(void**)slot;
+    //   else if (block->bump != block->end) { slot = block->bump; block->bump += block->slotBytes (32 bits); }
+    //   else call allocate instead;
+    //   ++block->live   (32 bits)
     // The place stays where it is for as long as the heap does, and what is in it changes.
     static constexpr bool kCanPopInline =
 #if defined(MEM_LOCAL_HEAP_ASAN)
@@ -152,6 +156,9 @@ public:
 #endif
     static constexpr std::size_t kBlockFreeOffset = offsetof(Block, free);
     static constexpr std::size_t kBlockLiveOffset = offsetof(Block, live);
+    static constexpr std::size_t kBlockBumpOffset = offsetof(Block, bump);
+    static constexpr std::size_t kBlockEndOffset = offsetof(Block, end);
+    static constexpr std::size_t kBlockSlotBytesOffset = offsetof(Block, slotBytes);
     Block* const* currentBlockOf(std::size_t bytes) const noexcept { return &classes_[classOf(bytes)].current; }
 
 private:
