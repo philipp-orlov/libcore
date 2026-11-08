@@ -30,6 +30,10 @@ private:
     }
 
     locale_t previous_;
+#else
+    // The C runtime's locale is "C" until a program changes it; there is nothing to switch. A user-provided constructor keeps
+    // the compiler from calling the unused scope object an unreferenced variable.
+    ClassicLocale() noexcept {}
 #endif
 };
 

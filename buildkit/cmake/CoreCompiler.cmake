@@ -14,6 +14,9 @@ function(core_target_defaults target)
             target_compile_options(${target} PRIVATE -Wshadow)
         endif()
     elseif(MSVC)
-        target_compile_options(${target} PRIVATE /W4 /permissive-)
+        # C4324: structures are padded by alignas on purpose, to keep hot counters on their own cache lines.
+        target_compile_options(${target} PRIVATE /W4 /permissive- /wd4324)
+        # C4996: getenv and fopen are standard C, used where their results are checked.
+        target_compile_definitions(${target} PRIVATE _CRT_SECURE_NO_WARNINGS)
     endif()
 endfunction()

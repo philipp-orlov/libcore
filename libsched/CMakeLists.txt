@@ -1,4 +1,8 @@
 add_library(core_sched STATIC src/thread_pool.cpp src/timer_wheel.cpp)
+if(MSVC)
+    # The padding of an alignas structure in these headers is intended (cache lines); say so for the code that includes them.
+    target_compile_options(core_sched INTERFACE /wd4324)
+endif()
 add_library(core::sched ALIAS core_sched)
 target_include_directories(core_sched PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 target_compile_features(core_sched PUBLIC cxx_std_17)

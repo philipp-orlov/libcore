@@ -1,4 +1,8 @@
 add_library(core_mem STATIC src/class_table.cpp src/hooks_stats.cpp src/slab_pool.cpp src/size_class_pool.cpp src/arena.cpp src/local_heap.cpp src/caching_allocator.cpp src/registered_pool.cpp src/page_class_allocator.cpp)
+if(MSVC)
+    # The padding of an alignas structure in these headers is intended (cache lines); say so for the code that includes them.
+    target_compile_options(core_mem INTERFACE /wd4324)
+endif()
 add_library(core::mem ALIAS core_mem)
 target_include_directories(core_mem PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 target_compile_features(core_mem PUBLIC cxx_std_17)
