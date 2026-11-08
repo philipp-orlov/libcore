@@ -9,7 +9,7 @@ Each component is self-contained and depends only on the components listed befor
 | Component | What it does |
 |---|---|
 | `libbase` | Status and `Result` types, span/slice views, hashes and checksums (xxh3, FNV-1a, CRC32C, SHA-1), base64/hex, UTF-8 and UTF-16, locale-independent number conversion |
-| `libsys` | OS layer: virtual memory and executable pages, futex waits, CPU topology, processes without a shell, files and durability, sockets, shared memory |
+| `libsys` | OS layer: virtual memory and executable pages, futex waits, CPU topology, processes without a shell, files and durability, sockets, shared memory, running as a service (`sys/service.hpp`: one way to stop, and the Windows service manager) |
 | `libmem` | Memory allocators: slab, size-class, arena (plain and with destructors), object pools, a single-owner small-object heap, a standard allocator over a pool, and a caching allocator |
 | `libsched` | Thread pool, `parallelFor`, timer heap and wheel, task queue |
 | `liblog` | Asynchronous logger with per-thread rings and console, file, syslog, and callback sinks |
@@ -27,7 +27,7 @@ Each component is self-contained and depends only on the components listed befor
 
 - Steady-state paths don't allocate from the process heap. Each component that claims this has a test that checks it.
 - Every component is tested under AddressSanitizer, UndefinedBehaviorSanitizer, and ThreadSanitizer.
-- Windows and macOS code paths that haven't been built and run are marked as such in the migration plan. Don't rely on them yet.
+- Windows and macOS code paths that haven't been built and run are marked as such in the migration plan. Don't rely on them yet. What tunnel uses on Windows has been built and run there: base, sys (not `Process` and `SharedMemory`, which are POSIX only), mem, sched, log, json, cfg, schema and net's IOCP loop. libhw, libdev and libtar have not been ported.
 - No component depends on a logger. They report through hooks such as `hw::setWarnHook` and `net::setLogHook`.
 
 ## Building

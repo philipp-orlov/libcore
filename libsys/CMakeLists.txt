@@ -1,4 +1,10 @@
-add_library(core_sys STATIC src/errno.cpp src/vm.cpp src/wait.cpp src/proc.cpp src/cpu.cpp src/file.cpp src/net.cpp)
+add_library(core_sys STATIC src/errno.cpp src/vm.cpp src/wait.cpp src/proc.cpp src/cpu.cpp src/file.cpp src/net.cpp src/service.cpp)
+if(WIN32)
+    target_sources(core_sys PRIVATE src/service_windows.cpp)
+    target_link_libraries(core_sys PUBLIC advapi32)
+else()
+    target_sources(core_sys PRIVATE src/service_posix.cpp)
+endif()
 # sys::Process (fork/exec, poll) and sys::SharedMemory (memfd, mmap) are POSIX only. Windows programs start children
 # with CreateProcess themselves.
 if(NOT WIN32)
@@ -12,7 +18,7 @@ target_link_libraries(core_sys PUBLIC core::base Threads::Threads)
 core_target_defaults(core_sys)
 
 if(CORE_BUILD_TESTS)
-    set(sys_tests vm wait cpu net)
+    set(sys_tests vm wait cpu net service)
     if(NOT WIN32)
         list(APPEND sys_tests process shm)
     endif()
