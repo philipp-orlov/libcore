@@ -39,11 +39,24 @@ void appendCodePointUtf16(Out& out, std::uint32_t cp) {
 template <class Out>
 void appendUtf8FromUtf16(std::u16string_view in, Out& out) {
     out.reserve(out.size() + in.size());
+    using C = typename Out::value_type;
     for (std::size_t i = 0; i < in.size(); ++i) {
+        // A run of ASCII, which is most text, copied in one go.
+        if (in[i] < 0x80) {
+            std::size_t end = i + 1;
+            while (end < in.size() && in[end] < 0x80)
+                ++end;
+            const std::size_t at = out.size();
+            out.resize(at + (end - i));
+            C* to = &out[at];
+            for (std::size_t k = i; k < end; ++k)
+                *to++ = C(in[k]);
+            i = end - 1;
+            continue;
+        }
         std::uint32_t cp = in[i];
         if (isHighSurrogate(cp) && i + 1 < in.size() && isLowSurrogate(in[i + 1]))
             cp = joinSurrogates(cp, in[++i]);
-        using C = typename Out::value_type;
         if (cp < 0x80) {
             out.push_back(C(cp));
         } else if (cp < 0x800) {
@@ -65,7 +78,21 @@ void appendUtf8FromUtf16(std::u16string_view in, Out& out) {
 template <class Out>
 void appendUtf16FromUtf8(std::string_view in, Out& out) {
     out.reserve(out.size() + in.size());
+    using C16 = typename Out::value_type;
     for (std::size_t i = 0; i < in.size();) {
+        // A run of ASCII, which is most text, copied in one go.
+        if (static_cast<std::uint8_t>(in[i]) < 0x80) {
+            std::size_t end = i + 1;
+            while (end < in.size() && static_cast<std::uint8_t>(in[end]) < 0x80)
+                ++end;
+            const std::size_t at = out.size();
+            out.resize(at + (end - i));
+            C16* to = &out[at];
+            for (std::size_t k = i; k < end; ++k)
+                *to++ = C16(static_cast<std::uint8_t>(in[k]));
+            i = end;
+            continue;
+        }
         const auto c = static_cast<std::uint8_t>(in[i]);
         std::uint32_t cp = c;
         std::size_t extra = 0;
