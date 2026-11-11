@@ -70,15 +70,8 @@ struct SlabPool::ThreadCacheAccess {
             p->retiredAcquires_.fetch_add(acq, std::memory_order_relaxed);
             p->retiredReleases_.fetch_add(rel, std::memory_order_relaxed);
             p->retiredInUse_.fetch_add(static_cast<std::int64_t>(acq) - static_cast<std::int64_t>(rel), std::memory_order_relaxed);
-            if (s.count) {
-                void* first = nullptr;
-                void* last = s.items[0];
-                for (unsigned i = 0; i < s.count; ++i) {
-                    *static_cast<void**>(s.items[i]) = first;
-                    first = s.items[i];
-                }
-                p->pushToShard(first, last, s.count);
-            }
+            if (s.count)
+                p->pushToShard(s.items, s.count);
             if (s.prev) s.prev->next = s.next; else p->slotHead_ = s.next;
             if (s.next) s.next->prev = s.prev;
         }
@@ -250,46 +243,67 @@ void* SlabPool::steal(unsigned self, bool blocking) noexcept {
             continue;
         if (other.freeCount == 0)
             continue;
-        void* first = other.freeHead;
-        void* last = first;
-        std::size_t taken = 1;
-        while (taken < kStealBatch) {
-            void* next = *static_cast<void**>(last);
-            if (!next)
-                break;
-            last = next;
-            ++taken;
-        }
-        other.freeHead = *static_cast<void**>(last);
-        other.freeCount -= taken;
+        void* taken[kStealBatch];
+        const std::size_t n = popFree(other, taken, kStealBatch);
         lock.unlock();
-        if (taken > 1) {
-            void* extra = *static_cast<void**>(first);
-            pushToShard(extra, last, taken - 1);
-        }
-        return first;
+        if (n > 1)
+            pushToShard(taken + 1, n - 1);
+        return taken[0];
     }
     return nullptr;
 }
 
-void SlabPool::pushToShard(void* first, void* last, std::size_t count) noexcept {
+namespace {
+// What a batch of free blocks keeps in the first of them: the next batch, and the addresses of the rest.
+struct FreeBatch {
+    void* next;
+    std::size_t count;
+    void* items[1];   // as many as the block has room for
+};
+}  // namespace
+
+std::size_t SlabPool::batchRoom() const noexcept {
+    return (blockBytes_ - offsetof(FreeBatch, items)) / sizeof(void*);
+}
+
+void SlabPool::pushToShard(void* const* blocks, std::size_t count) noexcept {
     Shard& sh = shards_[shardIndex()];
+    const std::size_t room = batchRoom();
     std::lock_guard<std::mutex> g(sh.mu);
-    *static_cast<void**>(last) = sh.freeHead;
-    sh.freeHead = first;
     sh.freeCount += count;
+    while (count) {
+        // The oldest holds the others: the newest come out first, the most likely to be in the cache still.
+        auto* batch = static_cast<FreeBatch*>(blocks[0]);
+        const std::size_t held = std::min(room, count - 1);
+        batch->next = sh.freeHead;
+        batch->count = held;
+        for (std::size_t i = 0; i < held; ++i)
+            batch->items[i] = blocks[1 + i];
+        sh.freeHead = batch;
+        blocks += 1 + held;
+        count -= 1 + held;
+    }
+}
+
+std::size_t SlabPool::popFree(Shard& sh, void** out, std::size_t want) noexcept {
+    std::size_t n = 0;
+    while (n < want && sh.freeHead) {
+        auto* batch = static_cast<FreeBatch*>(sh.freeHead);
+        while (n < want && batch->count)
+            out[n++] = batch->items[--batch->count];
+        if (n < want) {
+            sh.freeHead = batch->next;
+            out[n++] = batch;
+        }
+    }
+    sh.freeCount -= n;
+    return n;
 }
 
 std::size_t SlabPool::takeBatch(unsigned shard, void** out, std::size_t want) noexcept {
     Shard& sh = shards_[shard];
     std::lock_guard<std::mutex> g(sh.mu);
-    std::size_t n = 0;
-    while (n < want && sh.freeHead) {
-        void* p = sh.freeHead;
-        sh.freeHead = *static_cast<void**>(p);
-        --sh.freeCount;
-        out[n++] = p;
-    }
+    std::size_t n = popFree(sh, out, want);
     while (n < want) {
         void* p = takeFromCarve(sh);
         if (!p)
@@ -436,8 +450,7 @@ bool SlabPool::release(void* p) noexcept {
         std::memset(p, 0xDD, blockBytes_);
 #endif
     if (BASE_UNLIKELY(t_cacheGone)) {
-        *static_cast<void**>(p) = nullptr;
-        pushToShard(p, p, 1);
+        pushToShard(&p, 1);
         retiredReleases_.fetch_add(1, std::memory_order_relaxed);
         retiredInUse_.fetch_sub(1, std::memory_order_relaxed);
         return true;
@@ -449,16 +462,8 @@ bool SlabPool::release(void* p) noexcept {
         // Hand the newest half back to the shared free list in one locked operation.
         sampleInUse(s);
         const unsigned give = std::max<unsigned>(1, cap / 2);
-        void* first = nullptr;
-        void* last = nullptr;
-        for (unsigned i = 0; i < give; ++i) {
-            void* b = s.items[--s.count];
-            if (!last)
-                last = b;
-            *static_cast<void**>(b) = first;
-            first = b;
-        }
-        pushToShard(first, last, give);
+        s.count -= give;
+        pushToShard(s.items + s.count, give);
     }
     s.items[s.count++] = p;
     return true;
@@ -490,9 +495,12 @@ std::size_t SlabPool::trimFree() noexcept {
     std::size_t offered = 0;
     for (unsigned i = 0; i < shardCount_; ++i) {
         std::lock_guard<std::mutex> g(shards_[i].mu);
-        for (void* p = shards_[i].freeHead; p; p = *static_cast<void**>(p)) {
-            sys::vmDiscard(static_cast<char*>(p) + sizeof(void*), blockBytes_ - sizeof(void*));
-            offered += blockBytes_ - page;
+        // The blocks a batch lists hold nothing; the batch's own block holds the list.
+        for (auto* batch = static_cast<FreeBatch*>(shards_[i].freeHead); batch; batch = static_cast<FreeBatch*>(batch->next)) {
+            for (std::size_t k = 0; k < batch->count; ++k) {
+                sys::vmDiscard(static_cast<char*>(batch->items[k]) + sizeof(void*), blockBytes_ - sizeof(void*));
+                offered += blockBytes_ - page;
+            }
         }
     }
     return offered;

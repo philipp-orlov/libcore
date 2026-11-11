@@ -76,6 +76,9 @@ private:
     struct Slab;
     struct alignas(64) Shard {
         std::mutex mu;
+        // Free blocks in batches: each batch is a free block that holds the addresses of the others (`FreeBatch`), so a
+        // refill reads one block per batch rather than following a list through every block, a cache miss each, one
+        // after the other, in blocks that have mostly gone cold.
         void* freeHead = nullptr;
         std::size_t freeCount = 0;
         Slab* carve = nullptr;     // slab being handed out front to back
@@ -89,7 +92,9 @@ private:
     void* steal(unsigned self, bool blocking) noexcept;
     std::size_t takeBatch(unsigned shard, void** out, std::size_t want) noexcept;
     std::size_t refillBatch(void** out, std::size_t want) noexcept;   // free list, carve, steal, then a new slab
-    void pushToShard(void* first, void* last, std::size_t count) noexcept;
+    void pushToShard(void* const* blocks, std::size_t count) noexcept;
+    std::size_t popFree(Shard& sh, void** out, std::size_t want) noexcept;   // sh.mu held
+    std::size_t batchRoom() const noexcept;   // how many other blocks' addresses one free block can hold
     bool markAllocated(void* p) noexcept;          // sets the block's bit; false = corruption
     bool clearAllocated(void* p) noexcept;         // validates the pointer and clears the bit; false = misuse
     void sampleInUse(ThreadSlot& slot) noexcept;   // folds the slot's counters into the peak sample
