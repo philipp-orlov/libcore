@@ -4,6 +4,7 @@
 // The file layer a store stands on: open, positional I/O, resize, sync, mappings, and the way
 // failures are reported.
 #ifndef _WIN32
+#include <sys/stat.h>
 #include <unistd.h>
 #include <cerrno>
 #include <cstring>
@@ -17,6 +18,18 @@
 #include "sys/io_observer.hpp"
 
 namespace fs = std::filesystem;
+
+// The test binary is linked with --wrap=fsync: while g_failDirectorySync is set, an fsync of a directory fails.
+extern "C" int __real_fsync(int fd);
+static bool g_failDirectorySync = false;
+extern "C" int __wrap_fsync(int fd) {
+    struct stat st;
+    if (g_failDirectorySync && ::fstat(fd, &st) == 0 && S_ISDIR(st.st_mode)) {
+        errno = EIO;
+        return -1;
+    }
+    return __real_fsync(fd);
+}
 
 namespace {
 fs::path scratch(const char* name) {
@@ -86,6 +99,24 @@ TEST(reservedMappingExtendsInPlace) {
     CHECK(static_cast<unsigned char>(m.base[page - 1]) == 7);
     sys::flushRange(f, m, 0, page);
     sys::unmap(m);
+    fs::remove(p);
+}
+
+TEST(aFailedDirectorySyncLeavesNoFileForARetryToSkipTheSync) {
+    const fs::path p = scratch("dirsync");
+    fs::remove(p);
+    g_failDirectorySync = true;
+    bool threw = false;
+    try {
+        sys::File f(sys::openFile(p, false, true, false));
+    } catch (const base::Error&) {
+        threw = true;
+    }
+    g_failDirectorySync = false;
+    CHECK(threw);
+    CHECK(!fs::exists(p));  // otherwise the retry finds it, believes it is not new, and skips the sync
+    { sys::File f(sys::openFile(p, false, true, false)); }
+    CHECK(fs::exists(p));
     fs::remove(p);
 }
 

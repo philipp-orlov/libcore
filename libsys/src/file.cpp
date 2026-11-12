@@ -391,8 +391,7 @@ FileHandle openFile(const std::filesystem::path& path, bool readOnly, bool creat
         fd = ::open(path.c_str(), flags | O_EXCL, mode_t(mode));
         if (fd >= 0)
             created = true;
-        else if (errno != EEXIST)
-            ;  // reported below, by the ordinary open
+        // Any other error than EEXIST is reported below, by the ordinary open.
     }
     if (fd < 0)
         fd = ::open(path.c_str(), flags, mode_t(mode));
@@ -427,6 +426,10 @@ FileHandle openFile(const std::filesystem::path& path, bool readOnly, bool creat
                 const int saved = errno;
                 ::close(directory);
                 ::close(fd);
+                // `created` means this call's own exclusive open made the file, so nothing else can have
+                // written to it. Remove it: a retry must see a new file and sync the directory again, not
+                // find it existing and skip the sync.
+                ::unlink(path.c_str());
                 errno = saved;
                 fail(Fault::IoError, "fsync parent directory");
             }
