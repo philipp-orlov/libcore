@@ -34,7 +34,10 @@ endforeach()
 option(CORE_INSTALL "Install the libraries, headers and CMake package" ${PROJECT_IS_TOP_LEVEL})
 if(CORE_INSTALL)
     include(GNUInstallDirs)
-    set(_core_components base sys mem sched log json tar schema cfg hw dev net bench)
+    # A project that builds libcore as a subdirectory installs only the components it links.
+    set(CORE_INSTALL_COMPONENTS "base;sys;mem;sched;log;json;tar;schema;cfg;hw;dev;net;bench" CACHE STRING
+        "libcore components to install")
+    set(_core_components ${CORE_INSTALL_COMPONENTS})
     set(_core_targets "")
     foreach(c IN LISTS _core_components)
         if(TARGET core_${c})
