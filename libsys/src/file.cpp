@@ -383,7 +383,19 @@ FileHandle openFile(const std::filesystem::path& path, bool readOnly, bool creat
         flags |= O_CREAT;
     if (!readOnly && exclusiveCreate)
         flags |= O_CREAT | O_EXCL;
-    const int fd = ::open(path.c_str(), flags, mode_t(mode));
+    // A name made just now is not durable until its directory is: try to create exclusively
+    // first, so a new file is known to be new.
+    bool created = !readOnly && exclusiveCreate;
+    int fd = -1;
+    if (!readOnly && create && !exclusiveCreate) {
+        fd = ::open(path.c_str(), flags | O_EXCL, mode_t(mode));
+        if (fd >= 0)
+            created = true;
+        else if (errno != EEXIST)
+            ;  // reported below, by the ordinary open
+    }
+    if (fd < 0)
+        fd = ::open(path.c_str(), flags, mode_t(mode));
     if (fd < 0) {
         if (errno == ENOENT)
             throw base::Error(toCode(Fault::NotFound), "cannot open " + path.string());
@@ -406,6 +418,21 @@ FileHandle openFile(const std::filesystem::path& path, bool readOnly, bool creat
     // A file created just now gets the requested mode whatever the umask.
     if (!readOnly && create && st.st_size == 0 && (st.st_mode & 07777) != mode_t(mode))
         (void)::fchmod(fd, mode_t(mode));
+    if (created) {
+        const auto parent = path.parent_path().empty() ? std::filesystem::path(".") : path.parent_path();
+        const int directory = ::open(parent.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+        if (directory >= 0) {
+            // EINVAL: some filesystems cannot sync a directory; the name is as durable as it gets.
+            if (::fsync(directory) != 0 && errno != EINVAL) {
+                const int saved = errno;
+                ::close(directory);
+                ::close(fd);
+                errno = saved;
+                fail(Fault::IoError, "fsync parent directory");
+            }
+            ::close(directory);
+        }
+    }
     if (!lock)
         return fd;
     // Advisory whole-file lock in place of a .lck side file.
@@ -435,7 +462,11 @@ std::uint64_t fileSize(FileHandle fd)
 void resizeFile(FileHandle fd, std::uint64_t bytes)
 {
     observeIo(IoEvent::Resize, std::size_t(bytes));
-    if (::ftruncate(fd, off_t(bytes)) != 0)
+    int rc;
+    do
+        rc = ::ftruncate(fd, off_t(bytes));
+    while (rc != 0 && errno == EINTR);
+    if (rc != 0)
         fail(Fault::IoError, "ftruncate");
     if (WriteRecorder* r = writeRecorder.load(std::memory_order_relaxed))
         r->resized(fd, bytes);
@@ -444,7 +475,10 @@ void resizeFile(FileHandle fd, std::uint64_t bytes)
 void syncFile(FileHandle fd, bool metadata)
 {
     observeIo(IoEvent::Sync);
-    const int rc = metadata ? ::fsync(fd) : ::fdatasync(fd);
+    int rc;
+    do
+        rc = metadata ? ::fsync(fd) : ::fdatasync(fd);
+    while (rc != 0 && errno == EINTR);
     if (rc != 0)
         fail(Fault::IoError, "fsync");
     if (WriteRecorder* r = writeRecorder.load(std::memory_order_relaxed))
@@ -459,7 +493,11 @@ void reserveSpace(FileHandle fd, std::uint64_t offset, std::uint64_t length)
         return;
     // fallocate rather than posix_fallocate: glibc's fallback writes every
     // block one by one on a filesystem without support, which is far too slow.
-    if (::fallocate(fd, 0, off_t(offset), off_t(length)) != 0) {
+    int rc;
+    do
+        rc = ::fallocate(fd, 0, off_t(offset), off_t(length));
+    while (rc != 0 && errno == EINTR);
+    if (rc != 0) {
         if (errno == EOPNOTSUPP || errno == ENOSYS || errno == EINVAL || errno == ENODEV)
             return;
         fail(Fault::IoError, "fallocate");
@@ -511,10 +549,16 @@ void replaceFile(const std::filesystem::path& source, const std::filesystem::pat
     if (WriteRecorder* r = writeRecorder.load(std::memory_order_relaxed))
         r->replacing(source, target);
     if (replace) {
-        std::filesystem::rename(source, target);
+        if (::rename(source.c_str(), target.c_str()) != 0)
+            fail(Fault::IoError, "rename");
     } else {
-        std::filesystem::create_hard_link(source, target);
-        std::filesystem::remove(source);
+        if (::link(source.c_str(), target.c_str()) != 0) {
+            if (errno == EEXIST)
+                throw base::Error(toCode(Fault::InvalidArgument), "already exists: " + target.string());
+            fail(Fault::IoError, "link");
+        }
+        if (::unlink(source.c_str()) != 0)
+            fail(Fault::IoError, "unlink");
     }
     const auto parent = target.parent_path().empty() ? std::filesystem::path(".") : target.parent_path();
     observeIo(IoEvent::Replaced);

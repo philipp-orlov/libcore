@@ -82,12 +82,14 @@ void* Arena::tryAllocate(std::size_t bytes, std::size_t align) noexcept {
     if (top_) {
         const std::size_t at = alignUp(reinterpret_cast<std::uintptr_t>(top_->block.data) + top_->used, align) -
                                reinterpret_cast<std::uintptr_t>(top_->block.data);
-        if (at + bytes <= top_->block.capacity) {
+        if (bytes <= top_->block.capacity && at <= top_->block.capacity - bytes) {
             top_->used = at + bytes;
             used_ += bytes;
             return static_cast<char*>(top_->block.data) + at;
         }
     }
+    if (bytes > SIZE_MAX - align - 64)
+        return nullptr;  // the request cannot be met; a sum below would wrap
     Chunk* c = newChunk(bytes + align);
     if (!c)
         return nullptr;

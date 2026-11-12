@@ -142,3 +142,22 @@ TEST(rewindWithPointersHeldInOuterFrames) {
 }
 
 int main() { return tst::runAll("arena"); }
+
+TEST(hugeRequestIsRefusedNotWrapped) {
+    SizeClassPool pool(poolOpts());
+    Arena a({&pool, 8192, 2});
+    char* first = static_cast<char*>(a.allocate(16, 1));
+    CHECK(first != nullptr);
+    const auto used = a.usedBytes();
+    CHECK(a.tryAllocate(SIZE_MAX - 7, 1) == nullptr);
+    bool threw = false;
+    try {
+        (void)a.allocateArray<char>(SIZE_MAX - 7);
+    } catch (const std::bad_alloc&) {
+        threw = true;
+    }
+    CHECK(threw);
+    CHECK(a.usedBytes() == used);
+    char* next = static_cast<char*>(a.allocate(64, 1));
+    CHECK(next + 64 <= first || next >= first + 16);  // no overlap
+}
