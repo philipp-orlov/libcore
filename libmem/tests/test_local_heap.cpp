@@ -227,4 +227,28 @@ TEST(forEachSlotSeesWhatIsOutAndNothingElse) {
         heap.deallocate(out[i], 16 + i % 300);
 }
 
+TEST(ownerOfNamesTheHeapsOwnerForEverySmallSlot) {
+    int ownerA = 0, ownerB = 0;
+    mem::LocalHeap::Options oa, ob;
+    oa.owner = &ownerA;
+    ob.owner = &ownerB;
+    mem::LocalHeap a(oa), b(ob);
+    std::vector<std::pair<void*, std::size_t>> fromA, fromB;
+    for (std::size_t i = 0; i < 30000; ++i) {
+        const std::size_t bytes = 16 + (i * 40) % (mem::LocalHeap::kMaxSmall - 16);
+        fromA.push_back({a.allocate(bytes), bytes});
+        fromB.push_back({b.allocate(bytes), bytes});
+    }
+    for (auto& [p, bytes] : fromA)
+        CHECK(mem::LocalHeap::ownerOf(p) == &ownerA);
+    for (auto& [p, bytes] : fromB)
+        CHECK(mem::LocalHeap::ownerOf(p) == &ownerB);
+    // A slot's last byte is in its block too.
+    CHECK(mem::LocalHeap::ownerOf(static_cast<char*>(fromA[0].first) + 15) == &ownerA);
+    for (auto& [p, bytes] : fromA)
+        a.deallocate(p, bytes);
+    for (auto& [p, bytes] : fromB)
+        b.deallocate(p, bytes);
+}
+
 int main() { return tst::runAll("local_heap"); }

@@ -55,6 +55,7 @@ public:
         SizeClassPool* large = nullptr;     // serves requests above kMaxSmall; null = SizeClassPool::global()
         std::size_t minIdleBlocks = 16;     // idle blocks whose pages trim() always leaves resident
         unsigned idleFraction = 8;          // ... or 1/this of the blocks in use, whichever is more
+        void* owner = nullptr;              // what ownerOf returns for a small slot of this heap
     };
 
     struct Stats {
@@ -118,6 +119,9 @@ public:
     // it runs. Costs the blocks in use plus their free slots: an owner that wants to enumerate what it has needs no list
     // of its own, and no space in each object for one.
     void forEachSlot(void (*visit)(void* context, void* slot), void* context) const;
+    // The owner this heap was made with, for a small slot (a request of at most kMaxSmall) it handed out: a mask and a
+    // load, so a cell need not carry a pointer back to whatever owns it. A larger request has no block; ask the owner.
+    static void* ownerOf(const void* p) noexcept { return blockOf(const_cast<void*>(p))->owner; }
     // The usable size of a request: what a slot really holds.
     static std::size_t usableSize(std::size_t bytes) noexcept { return bytes && bytes <= kMaxSmall ? slotBytesOf(classOf(bytes)) : bytes; }
 
@@ -135,6 +139,7 @@ private:
         std::uint32_t live = 0;
         std::uint32_t slotBytes = 0;
         std::uint32_t cls = 0;
+        void* owner = nullptr;
     };
     static_assert(sizeof(Block) <= 64, "a block's header must stay on one cache line");
     static constexpr std::size_t kBlockHeader = 64;

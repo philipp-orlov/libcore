@@ -139,6 +139,7 @@ LocalHeap::Block* LocalHeap::takeBlock(std::size_t cls) {
     block->end = block->bump + (kBlockBytes - kBlockHeader) / slotBytes * slotBytes;
     block->slotBytes = static_cast<std::uint32_t>(slotBytes);
     block->cls = static_cast<std::uint32_t>(cls);
+    block->owner = options_.owner;
     ++blocksInUse_;
     return block;
 }
