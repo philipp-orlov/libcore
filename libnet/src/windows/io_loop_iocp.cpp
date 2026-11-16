@@ -17,16 +17,32 @@
 // completes, aborted, on a later round. So every pending operation holds a
 // shared_ptr to its Impl (readSelf, writeSelf, acceptSelf), taken before the
 // call is issued and dropped when its completion has been dispatched (or at
-// once if the call failed to start). The Impl owns what the kernel touches
-// meanwhile: the OVERLAPPED, and the receive buffer, which is copied to the
-// caller's on completion and only while the read is still wanted.
+// once if the call failed to start). The Impl owns the one thing the kernel
+// touches meanwhile, the OVERLAPPED.
+//
+// Reads: the pending operation is a zero-byte WSARecv, which completes when
+// the socket has something to read (or has ended) and touches no buffer. The
+// bytes are then taken with a plain non-blocking recv(), on the loop thread,
+// straight into the caller's buffer -- or, when the caller gave none, into a
+// buffer the loop owns and lends for the duration of the callback. So a read
+// copies nothing, a connection that waits holds no receive buffer of its own
+// (and pins no pages in the kernel), and a buffer the caller frees after
+// close() is never written: the kernel never had it.
+//
+// Writes: tryWrite() is a plain non-blocking send from the caller's memory;
+// asyncWrite() an overlapped WSASend, for what the socket did not take.
 //
 // Built and run on Windows by tunnel's end-to-end tests (the relay's server
 // runs on it); the 23 of tests/e2e_windows.py and the relay's own exercise
 // accept, read, write and close under load.
 
+#include <algorithm>
 #include <atomic>
+#include <climits>
 #include <cstring>
+#include <memory>
+#include <stdexcept>
+#include <system_error>
 #include <thread>
 #include <vector>
 
@@ -37,6 +53,18 @@ namespace net {
 namespace {
 
 constexpr ULONG_PTR kWakeupKey = 0;
+
+// What a read with no buffer of the caller's lands in: one per loop, lent to
+// each such read's callback in turn (completions are dispatched one at a
+// time, and never from inside a callback).
+constexpr size_t kReceiveBufferBytes = 256 * 1024;
+
+// Completions taken from the port per round.
+constexpr ULONG kCompletionBatch = 64;
+
+// How long a listener that could not start an accept (no socket to be had,
+// say) waits before it tries again.
+constexpr std::chrono::milliseconds kAcceptRetryDelay{100};
 constexpr ULONG_PTR kIoKey =
     1;  // per-handler completion key; handler ptr carried via OVERLAPPED subtype instead
 
@@ -95,6 +123,10 @@ struct IoLoop::Impl
     Impl(size_t taskCapacity, size_t timerCapacity) : tasks(taskCapacity), timers(timerCapacity) {}
     HANDLE iocp = nullptr;
     std::atomic<bool> started{false};
+    // True only while the loop thread is, or is about to be, blocked on the
+    // port: the one state in which a poster has to queue a wakeup packet.
+    std::atomic<bool> sleeping{false};
+    std::unique_ptr<unsigned char[]> receiveBuffer{new unsigned char[kReceiveBufferBytes]};
     std::thread::id loopThreadId;
     uint64_t iteration = 0;
     std::chrono::steady_clock::time_point roundStart = std::chrono::steady_clock::now();
@@ -103,16 +135,32 @@ struct IoLoop::Impl
 
     sched::BasicTimerHeap<std::function<void()>> timers;
 
-    void wakeUp() { PostQueuedCompletionStatus(iocp, 0, kWakeupKey, nullptr); }
+    // A loop that is awake sees what was just queued when it next checks,
+    // which it does right before it sleeps; only a sleeping one needs the
+    // packet (a system call, and a round of the loop to take it off the port
+    // again). `sleeping` is raised before the queue and the timers are
+    // consulted for the last time, so a poster either sees it raised and
+    // posts, or its work is seen by that consultation.
+    void wakeUp()
+    {
+        if (sleeping.load())
+            PostQueuedCompletionStatus(iocp, 0, kWakeupKey, nullptr);
+    }
 
     DWORD computeTimeoutMilliseconds()
     {
+        if (timers.empty())
+            return INFINITE;
+
         // -1 (no timer armed) is INFINITE.
         return static_cast<DWORD>(timers.waitMilliseconds(sched::BasicTimerHeap<std::function<void()>>::Clock::now()));
     }
 
     void fireExpiredTimers()
     {
+        if (timers.empty())
+            return;
+
         for (size_t fired = 0; fired < timers.capacity(); ++fired) {
             TimerCallback callback;
             if (!timers.popDue(sched::BasicTimerHeap<std::function<void()>>::Clock::now(), callback))
@@ -126,13 +174,23 @@ struct IoLoop::Impl
         }
     }
 
-    void drainPostedTasks() { tasks.drain(); }
+    void drainPostedTasks()
+    {
+        if (tasks.hasPending())
+            tasks.drain();
+    }
 };
 
 IoLoop::IoLoop(size_t taskCapacity, size_t timerCapacity)
     : impl_(std::make_unique<Impl>(taskCapacity, timerCapacity))
 {
-    impl_->iocp = CreateIoCompletionPort(INVALID_HANDLE_VALUE, nullptr, 0, 0);
+    // Winsock, for the life of the process: a program that only makes a server (and no sys::Pal of its own) would
+    // otherwise find every socket() refused with WSANOTINITIALISED.
+    static const sys::Pal winsock;
+    // One thread ever waits on the port.
+    impl_->iocp = CreateIoCompletionPort(INVALID_HANDLE_VALUE, nullptr, 0, 1);
+    if (!impl_->iocp)
+        throw std::runtime_error("reactor creation: CreateIoCompletionPort failed");
 }
 
 IoLoop::~IoLoop()
@@ -148,35 +206,51 @@ void IoLoop::run()
 
     impl_->loopThreadId = std::this_thread::get_id();
 
+    OVERLAPPED_ENTRY entries[kCompletionBatch];
     while (!impl_->tasks.closed() || impl_->tasks.hasPending()) {
-        DWORD timeoutMs = impl_->computeTimeoutMilliseconds();
-        DWORD bytesTransferred = 0;
-        ULONG_PTR completionKey = 0;
-        OVERLAPPED* overlapped = nullptr;
-
-        BOOL ok = GetQueuedCompletionStatus(impl_->iocp, &bytesTransferred, &completionKey,
-                                            &overlapped, timeoutMs);
+        impl_->sleeping.store(true);
+        // Consulted after `sleeping` is raised -- see Impl::wakeUp.
+        const DWORD timeoutMs = impl_->tasks.hasPending() || impl_->tasks.closed()
+                                    ? 0
+                                    : impl_->computeTimeoutMilliseconds();
+        ULONG count = 0;
+        const BOOL ok =
+            GetQueuedCompletionStatusEx(impl_->iocp, entries, kCompletionBatch, &count, timeoutMs, FALSE);
+        impl_->sleeping.store(false);
         ++impl_->iteration;
         impl_->roundStart = std::chrono::steady_clock::now();
-        if (!ok && overlapped == nullptr) {
-            // Timeout (no completion within timeoutMs) -- fall through to
-            // process timers/tasks below.
-        } else if (overlapped != nullptr) {
-            int errorCode = ok ? 0 : static_cast<int>(GetLastError());
-            auto* op = static_cast<IocpOp*>(overlapped);
-            if (op->kind == OpKind::Wakeup) {
-                // no-op marker; nothing to do besides looping around
-            } else {
-                auto* handler = reinterpret_cast<IocpHandler*>(completionKey);
-                try {
-                    handler->onComplete(op, bytesTransferred, ok != 0, errorCode);
-                } catch (...) {
-                    NET_LOG_ERROR("I/O completion callback threw");
-                }
+        if (!ok) {
+            // A timeout: nothing completed, timers and tasks are looked at below. Anything else is the port
+            // itself failing, which cannot be waited out.
+            count = 0;
+            const DWORD error = GetLastError();
+            if (error != WAIT_TIMEOUT) {
+                NET_LOG_ERROR("GetQueuedCompletionStatusEx failed: %lu", error);
+                break;
             }
         }
-        // completionKey == kWakeupKey with overlapped == nullptr is the
-        // explicit wakeUp() ping; nothing to do besides looping around.
+        // Every operation in the batch holds its handler alive (readSelf, writeSelf, acceptSelf) until it has been
+        // dispatched, so a callback that closes another connection of the same batch leaves that one's entry valid.
+        for (ULONG index = 0; index < count; ++index) {
+            OVERLAPPED* overlapped = entries[index].lpOverlapped;
+            if (!overlapped)
+                continue;  // the explicit wakeUp() packet: nothing to do besides looping around
+
+            auto* op = static_cast<IocpOp*>(overlapped);
+            if (op->kind == OpKind::Wakeup)
+                continue;
+
+            // The operation's NTSTATUS: zero is success. What a failure reports is that status, which is enough
+            // to tell failures apart in a log (callers only look at `ok`).
+            const bool succeeded = overlapped->Internal == 0;
+            auto* handler = reinterpret_cast<IocpHandler*>(entries[index].lpCompletionKey);
+            try {
+                handler->onComplete(op, entries[index].dwNumberOfBytesTransferred, succeeded,
+                                    succeeded ? 0 : static_cast<int>(overlapped->Internal));
+            } catch (...) {
+                NET_LOG_ERROR("I/O completion callback threw");
+            }
+        }
 
         impl_->fireExpiredTimers();
         impl_->drainPostedTasks();
@@ -276,10 +350,8 @@ struct TcpConnection::Impl : IocpHandler, std::enable_shared_from_this<TcpConnec
     IocpOp readOp{};
     WSABUF readWsaBuf{};
     IoCallback readCallback;
-    // What the kernel fills: always this buffer, which lives as long as the
-    // read can complete (see the note at the top). A caller's own buffer gets
-    // a copy when the read completes; with none, the bytes are read from here.
-    std::vector<unsigned char> recvBuffer;
+    // Where the bytes go once the socket is readable: the caller's buffer, or
+    // (null) the loop's, lent for the callback. The kernel is never given it.
     unsigned char* callerReadBuffer = nullptr;
     std::shared_ptr<Impl> readSelf;   // held while a read is pending
     std::shared_ptr<Impl> writeSelf;  // held while a write is pending
@@ -308,10 +380,13 @@ struct TcpConnection::Impl : IocpHandler, std::enable_shared_from_this<TcpConnec
         associated = true;
     }
 
+    // A zero-byte receive: it completes when there is something to read or
+    // the stream has ended, and moves no data.
     void submitRead()
     {
-        readWsaBuf.buf = reinterpret_cast<CHAR*>(recvBuffer.data());
-        readWsaBuf.len = static_cast<ULONG>(pendingReadCap);
+        static CHAR nothing;
+        readWsaBuf.buf = &nothing;
+        readWsaBuf.len = 0;
         DWORD flags = 0;
         std::memset(&readOp, 0, sizeof(WSAOVERLAPPED));
         readOp.kind = OpKind::Read;
@@ -363,17 +438,27 @@ struct TcpConnection::Impl : IocpHandler, std::enable_shared_from_this<TcpConnec
                     callback(IoResult{0, false, errorCode});
                 return;
             }
+            if (!readCallback)
+                return;  // closed meanwhile: the callback was answered then, and the caller's buffer is no longer ours to write
+            unsigned char* data = callerReadBuffer ? callerReadBuffer : loop.impl()->receiveBuffer.get();
+            const size_t capacity = callerReadBuffer ? pendingReadCap : kReceiveBufferBytes;
+            const int received = ::recv(fd, reinterpret_cast<char*>(data),
+                                        static_cast<int>(std::min<size_t>(capacity, INT_MAX)), 0);
+            if (received == SOCKET_ERROR) {
+                const int err = WSAGetLastError();
+                if (err == WSAEWOULDBLOCK) {
+                    submitRead();  // nothing after all: wait again, the callback stays where it is
+                    return;
+                }
+                closed = true;
+                auto callback = std::move(readCallback);
+                readCallback = nullptr;
+                callback(IoResult{0, false, err});
+                return;
+            }
             auto callback = std::move(readCallback);
             readCallback = nullptr;
-            if (!callback)
-                return;  // closed meanwhile: the callback was answered then, and the caller's buffer is no longer ours to write
-            unsigned char* data = recvBuffer.data();
-            if (callerReadBuffer) {
-                if (bytesTransferred)
-                    std::memcpy(callerReadBuffer, recvBuffer.data(), bytesTransferred);
-                data = callerReadBuffer;
-            }
-            callback(IoResult{bytesTransferred, true, 0, data});
+            callback(IoResult{static_cast<size_t>(received), true, 0, data});
         } else if (op->kind == OpKind::Write) {
             auto keepAlive = std::move(writeSelf);  // dropped on return, after the callback
             if (!ok) {
@@ -416,10 +501,6 @@ void TcpConnection::asyncRead(unsigned char* buffer, size_t bufferCapacity, IoCa
         callback(IoResult{0, false, WSAECONNABORTED});
         return;
     }
-    if (!buffer)
-        bufferCapacity = 16 * 1024;  // the connection's own, made on first use
-    if (impl_->recvBuffer.size() < bufferCapacity)
-        impl_->recvBuffer.resize(bufferCapacity);
     impl_->callerReadBuffer = buffer;
     impl_->pendingReadCap = bufferCapacity;
     impl_->readCallback = std::move(callback);
@@ -443,11 +524,37 @@ void TcpConnection::asyncWrite(const unsigned char* data, size_t length, IoCallb
     impl_->submitWrite();
 }
 
-size_t TcpConnection::tryWrite(const unsigned char*, size_t, const unsigned char*, size_t)
+size_t TcpConnection::tryWrite(const unsigned char* head, size_t headLength, const unsigned char* body,
+                               size_t bodyLength)
 {
-    // IOCP has no immediate send that leaves the buffers with the caller;
-    // callers copy and use asyncWrite.
-    return 0;
+    // A send without an OVERLAPPED on a non-blocking socket: it takes what
+    // fits in the socket's buffer now and returns, queues no completion, and
+    // keeps neither pointer.
+    if (impl_->closed || impl_->writeCallback || fd_ == kInvalidSocket)
+        return 0;
+
+    constexpr size_t kMost = size_t{1} << 30;
+    WSABUF buffers[2];
+    DWORD count = 0;
+    if (headLength) {
+        buffers[count].buf = const_cast<CHAR*>(reinterpret_cast<const CHAR*>(head));
+        buffers[count].len = static_cast<ULONG>(std::min(headLength, kMost));
+        ++count;
+    }
+    // The body only behind a whole head, or the bytes would go out of order.
+    if (bodyLength && headLength <= kMost) {
+        buffers[count].buf = const_cast<CHAR*>(reinterpret_cast<const CHAR*>(body));
+        buffers[count].len = static_cast<ULONG>(std::min(bodyLength, kMost));
+        ++count;
+    }
+    if (!count)
+        return 0;
+
+    DWORD sent = 0;
+    if (WSASend(fd_, buffers, count, &sent, 0, nullptr, nullptr) == SOCKET_ERROR)
+        return 0;  // would block, or failed: the asyncWrite that follows reports a failure
+
+    return sent;
 }
 
 void TcpConnection::close()
@@ -515,6 +622,7 @@ struct TcpListener::Impl : IocpHandler, std::enable_shared_from_this<TcpListener
     IocpOp acceptOp{};
     std::vector<char> acceptAddrBuf;  // holds local+remote sockaddr output from AcceptEx
     std::shared_ptr<Impl> acceptSelf;  // held while an AcceptEx is pending
+    bool retryArmed = false;           // a timer will call armAccept() again
 
     static constexpr size_t kAddrLen = sizeof(sockaddr_in6) + 16;
 
@@ -528,8 +636,11 @@ struct TcpListener::Impl : IocpHandler, std::enable_shared_from_this<TcpListener
         if (fd == kInvalidSocket)
             return;  // closed
         pendingAcceptSocket = ::socket(family, SOCK_STREAM, 0);
-        if (pendingAcceptSocket == kInvalidSocket)
+        if (pendingAcceptSocket == kInvalidSocket) {
+            NET_LOG_WARN("accept: no socket to accept into: %d", WSAGetLastError());
+            retryLater();
             return;
+        }
 
         DWORD bytesReceived = 0;
         std::memset(&acceptOp, 0, sizeof(WSAOVERLAPPED));
@@ -545,7 +656,27 @@ struct TcpListener::Impl : IocpHandler, std::enable_shared_from_this<TcpListener
                 closeSocket(pendingAcceptSocket);
                 pendingAcceptSocket = kInvalidSocket;
                 NET_LOG_WARN("AcceptEx failed: %d", err);
+                retryLater();
             }
+        }
+    }
+
+    // An accept that could not be started must not be the listener's last: without one pending nothing would ever
+    // call armAccept() again, and the server would listen without accepting for the rest of its life.
+    void retryLater()
+    {
+        if (retryArmed || fd == kInvalidSocket)
+            return;
+        try {
+            std::shared_ptr<Impl> self = shared_from_this();
+            loop.addTimer(kAcceptRetryDelay, [self] {
+                self->retryArmed = false;
+                if (!self->acceptSelf)
+                    self->armAccept();
+            });
+            retryArmed = true;
+        } catch (...) {
+            NET_LOG_ERROR("accept: cannot schedule a retry; the listener has stopped accepting");
         }
     }
 
@@ -576,38 +707,50 @@ struct TcpListener::Impl : IocpHandler, std::enable_shared_from_this<TcpListener
     }
 };
 
-TcpListener::TcpListener(IoLoop& loop, const std::string& host, uint16_t port, bool /*reusePort*/)
+TcpListener::TcpListener(IoLoop& loop, const std::string& host, uint16_t port, bool reusePort)
     : loop_(loop), impl_(std::make_shared<Impl>(loop))
 {
     // Where to bind is what the other backends bind: "" and "0.0.0.0" are every IPv4 address, "::" every address of a
     // dual-stack socket, a literal that address, and a name whatever it resolves to. (A bare inet_pton here would turn a
     // name into 0.0.0.0, which is every interface.)
     sys::ListenAddress address;
-    if (!sys::resolveListenAddress(host, port, address)) {
-        NET_LOG_ERROR("cannot resolve the address to listen on: %s", host.c_str());
-        return;  // no fd: the listener is closed from the start
-    }
+    // A listener that cannot listen is an error the owner has to hear about, as on the other backends: logging it
+    // and going on would leave a server that reports itself listening and accepts nothing (a port in use, say).
+    if (!sys::resolveListenAddress(host, port, address))
+        throw std::invalid_argument("invalid listen address");
     impl_->family = address.family;
     impl_->fd = ::socket(address.family, SOCK_STREAM, 0);
-    if (impl_->fd == kInvalidSocket) {
-        NET_LOG_ERROR("socket() failed: %d", WSAGetLastError());
-        return;
+    if (impl_->fd == kInvalidSocket)
+        throw std::system_error(WSAGetLastError(), std::system_category(), "socket");
+    // On Windows SO_REUSEADDR lets a second socket bind a port that is already listened on -- by this process or by any
+    // other -- and which of them then gets a connection is unspecified. So it is set only for a caller that asked to
+    // share the port. Everyone else gets the opposite: an exclusive bind, which fails when the port is taken (and
+    // which nobody can bind over later).
+    if (reusePort) {
+        setReuseAddr(impl_->fd);
+    } else {
+        const BOOL exclusive = TRUE;
+        setsockopt(impl_->fd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, reinterpret_cast<const char*>(&exclusive),
+                   sizeof exclusive);
     }
-    setReuseAddr(impl_->fd);
     if (address.family == AF_INET6) {
         const DWORD v6only = address.dualStack ? 0 : 1;
         setsockopt(impl_->fd, IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<const char*>(&v6only), sizeof v6only);
     }
     ensureExtensionFunctionsLoaded(impl_->fd);
 
-    if (::bind(impl_->fd, reinterpret_cast<const sockaddr*>(&address.storage), address.length) != 0) {
-        NET_LOG_ERROR("bind(%s:%u) failed: %d", host.c_str(), port, WSAGetLastError());
-    }
-    if (::listen(impl_->fd, SOMAXCONN) != 0) {
-        NET_LOG_ERROR("listen() failed: %d", WSAGetLastError());
-    }
-
-    CreateIoCompletionPort(reinterpret_cast<HANDLE>(impl_->fd), loop_.impl()->iocp, keyOf(impl_.get()), 0);
+    const auto fail = [this](const char* what) {
+        const int error = WSAGetLastError();
+        closeSocket(impl_->fd);
+        impl_->fd = kInvalidSocket;
+        throw std::system_error(error, std::system_category(), what);
+    };
+    if (::bind(impl_->fd, reinterpret_cast<const sockaddr*>(&address.storage), address.length) != 0)
+        fail("bind");
+    if (::listen(impl_->fd, SOMAXCONN) != 0)
+        fail("listen");
+    if (!CreateIoCompletionPort(reinterpret_cast<HANDLE>(impl_->fd), loop_.impl()->iocp, keyOf(impl_.get()), 0))
+        fail("listen registration");
 }
 
 TcpListener::~TcpListener()

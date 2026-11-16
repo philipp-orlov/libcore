@@ -38,7 +38,8 @@ void appendCodePointUtf16(Out& out, std::uint32_t cp) {
 
 template <class Out>
 void appendUtf8FromUtf16(std::u16string_view in, Out& out) {
-    out.reserve(out.size() + in.size());
+    if (out.capacity() - out.size() < in.size())  // never below the capacity: before C++20 that shrinks
+        out.reserve(out.size() + in.size());
     using C = typename Out::value_type;
     for (std::size_t i = 0; i < in.size(); ++i) {
         // A run of ASCII, which is most text, copied in one go.
@@ -77,7 +78,8 @@ void appendUtf8FromUtf16(std::u16string_view in, Out& out) {
 
 template <class Out>
 void appendUtf16FromUtf8(std::string_view in, Out& out) {
-    out.reserve(out.size() + in.size());
+    if (out.capacity() - out.size() < in.size())  // never below the capacity: before C++20 that shrinks
+        out.reserve(out.size() + in.size());
     using C16 = typename Out::value_type;
     for (std::size_t i = 0; i < in.size();) {
         // A run of ASCII, which is most text, copied in one go.

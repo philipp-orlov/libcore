@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Philipp Orlov
 // SPDX-License-Identifier: Apache-2.0
 
-#include <arpa/inet.h>
-#include <sys/socket.h>
-
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstring>
@@ -16,19 +14,32 @@
 
 #include "mini_test.hpp"
 #include "net/io_loop.hpp"
+#include "sys/net.hpp"
+
+// The client side of these tests is plain blocking sockets, spelled the same on both platforms.
+#ifdef _WIN32
+using ssize_t = int;
+static const int SHUT_WR = SD_SEND;
+static int sendAll(net::socket_t s, const char* data, size_t n) { return ::send(s, data, static_cast<int>(n), 0); }
+static ssize_t receive(net::socket_t s, char* data, size_t n) { return ::recv(s, data, static_cast<int>(n), 0); }
+#else
+static int sendAll(net::socket_t s, const char* data, size_t n) { return static_cast<int>(::send(s, data, n, 0)); }
+static ssize_t receive(net::socket_t s, char* data, size_t n) { return ::recv(s, data, n, 0); }
+#endif
+static const sys::Pal pal;
 
 using namespace std::chrono_literals;
 
 namespace {
 uint16_t freePort() {
-    int s = ::socket(AF_INET, SOCK_STREAM, 0);
+    net::socket_t s = ::socket(AF_INET, SOCK_STREAM, 0);
     sockaddr_in a{};
     a.sin_family = AF_INET;
     a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     ::bind(s, reinterpret_cast<sockaddr*>(&a), sizeof a);
     socklen_t len = sizeof a;
     ::getsockname(s, reinterpret_cast<sockaddr*>(&a), &len);
-    ::close(s);
+    sys::closeSocket(s);
     return ntohs(a.sin_port);
 }
 struct Loop {
@@ -99,7 +110,7 @@ TEST(echoServerOverTheLoop) {
     });
 
     for (int client = 0; client < 4; ++client) {
-        int s = ::socket(AF_INET, SOCK_STREAM, 0);
+        net::socket_t s = ::socket(AF_INET, SOCK_STREAM, 0);
         sockaddr_in a{};
         a.sin_family = AF_INET;
         a.sin_port = htons(port);
@@ -108,17 +119,17 @@ TEST(echoServerOverTheLoop) {
         for (int round = 0; round < 50; ++round) {
             char out[64], in[64];
             const int n = std::snprintf(out, sizeof out, "client %d round %d", client, round);
-            CHECK_EQ(::send(s, out, static_cast<size_t>(n), 0), n);
+            CHECK_EQ(sendAll(s, out, static_cast<size_t>(n)), n);
             size_t got = 0;
             while (got < static_cast<size_t>(n)) {
-                const ssize_t r = ::recv(s, in + got, sizeof in - got, 0);
+                const ssize_t r = receive(s, in + got, sizeof in - got);
                 if (r <= 0) break;
                 got += static_cast<size_t>(r);
             }
             CHECK_EQ(got, static_cast<size_t>(n));
             CHECK(std::memcmp(in, out, got) == 0);
         }
-        ::close(s);
+        sys::closeSocket(s);
     }
     CHECK_EQ(accepted.load(), 4);
     onLoop(l.loop, [&] {
@@ -145,14 +156,14 @@ TEST(endOfStreamThatArrivedWithTheDataIsSeen) {
             acceptedPromise.set_value();
         });
     });
-    int s = ::socket(AF_INET, SOCK_STREAM, 0);
+    net::socket_t s = ::socket(AF_INET, SOCK_STREAM, 0);
     sockaddr_in a{};
     a.sin_family = AF_INET;
     a.sin_port = htons(port);
     a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     CHECK_EQ(::connect(s, reinterpret_cast<sockaddr*>(&a), sizeof a), 0);
     acceptedPromise.get_future().wait();
-    CHECK_EQ(::send(s, "hello", 5, 0), 5);
+    CHECK_EQ(sendAll(s, "hello", 5), 5);
     ::shutdown(s, SHUT_WR);
     std::this_thread::sleep_for(100ms);  // both are in, and the loop has seen their event with no read waiting
 
@@ -172,7 +183,7 @@ TEST(endOfStreamThatArrivedWithTheDataIsSeen) {
     CHECK(ended);
     if (ended)
         CHECK(secondResult.get());
-    ::close(s);
+    sys::closeSocket(s);
     onLoop(l.loop, [&] {
         if (connection)
             connection->close();
@@ -180,6 +191,96 @@ TEST(endOfStreamThatArrivedWithTheDataIsSeen) {
         listener->close();
         listener.reset();
     });
+}
+
+// A megabyte each way: the server reads into a buffer of its own (never the loop's), and answers with tryWrite first
+// and asyncWrite for whatever the socket did not take at once. Every byte arrives, in order, on both sides.
+TEST(largeTransferThroughCallerBuffersAndTryWrite) {
+    Loop l;
+    const uint16_t port = freePort();
+    constexpr size_t kTotal = 1 << 20;
+    std::unique_ptr<net::TcpListener> listener;
+    std::shared_ptr<net::TcpConnection> connection;   // loop thread only
+    std::vector<unsigned char> received(kTotal);
+    std::vector<unsigned char> reply(kTotal);
+    for (size_t i = 0; i < kTotal; ++i)
+        reply[i] = static_cast<unsigned char>(i * 31 + 7);
+    size_t got = 0;
+    std::atomic<size_t> immediate{0};
+    std::promise<bool> finished;
+    std::function<void()> readOn = [&] {
+        connection->asyncRead(received.data() + got, received.size() - got, [&](net::IoResult r) {
+            if (!r.ok || r.bytes == 0) { finished.set_value(false); return; }
+            CHECK(r.data == received.data() + got);   // in place: nothing was copied through another buffer
+            got += r.bytes;
+            if (got < kTotal) { readOn(); return; }
+            const size_t sent = connection->tryWrite(reply.data(), 16, reply.data() + 16, reply.size() - 16);
+            immediate = sent;
+            connection->asyncWrite(reply.data() + sent, reply.size() - sent,
+                                   [&](net::IoResult w) { finished.set_value(w.ok); });
+        });
+    };
+    onLoop(l.loop, [&] {
+        listener = std::make_unique<net::TcpListener>(l.loop, "127.0.0.1", port, false);
+        listener->asyncAccept([&](net::socket_t fd) {
+            connection = std::make_shared<net::TcpConnection>(l.loop, fd);
+            readOn();
+        });
+    });
+    net::socket_t s = ::socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in a{};
+    a.sin_family = AF_INET;
+    a.sin_port = htons(port);
+    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    CHECK_EQ(::connect(s, reinterpret_cast<sockaddr*>(&a), sizeof a), 0);
+    std::vector<char> out(kTotal);
+    for (size_t i = 0; i < kTotal; ++i)
+        out[i] = static_cast<char>(i * 17 + 3);
+    std::thread writer([&] {
+        size_t at = 0;
+        while (at < kTotal) {
+            const int n = sendAll(s, out.data() + at, std::min<size_t>(kTotal - at, 64 * 1024));
+            if (n <= 0) break;
+            at += static_cast<size_t>(n);
+        }
+    });
+    std::vector<char> in(kTotal);
+    size_t read = 0;
+    while (read < kTotal) {
+        const ssize_t n = receive(s, in.data() + read, kTotal - read);
+        if (n <= 0) break;
+        read += static_cast<size_t>(n);
+    }
+    writer.join();
+    auto done = finished.get_future();
+    CHECK(done.wait_for(5s) == std::future_status::ready);
+    CHECK_EQ(read, kTotal);
+    CHECK(std::memcmp(in.data(), reply.data(), kTotal) == 0);
+    CHECK(std::memcmp(received.data(), out.data(), kTotal) == 0);
+    CHECK(immediate.load() >= 16u);   // an empty socket buffer takes at least the head at once
+    sys::closeSocket(s);
+    onLoop(l.loop, [&] {
+        connection->close();
+        connection.reset();
+        listener->close();
+        listener.reset();
+    });
+}
+
+// Posting from the loop's own thread, and timers armed there, need no wakeup and still run: a chain of tasks each
+// posting the next, ending in a timer.
+TEST(tasksAndTimersQueuedFromTheLoopThreadRun) {
+    Loop l;
+    std::promise<int> done;
+    std::atomic<int> hops{0};
+    std::function<void()> hop = [&] {
+        if (++hops < 1000) { l.loop.post(hop); return; }
+        l.loop.addTimer(5ms, [&] { done.set_value(hops.load()); });
+    };
+    l.loop.post(hop);
+    auto result = done.get_future();
+    CHECK(result.wait_for(5s) == std::future_status::ready);
+    CHECK_EQ(result.get(), 1000);
 }
 
 int main() { return tst::runAll("net_loop"); }

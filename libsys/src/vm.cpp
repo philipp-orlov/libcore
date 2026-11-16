@@ -230,7 +230,11 @@ void vmDiscard(void* p, std::size_t bytes) noexcept {
     const std::uintptr_t first = (at + sp - 1) & ~(sp - 1);
     const std::uintptr_t last = (at + bytes) & ~(sp - 1);
     if (last <= first) return;
-    (void)::VirtualAlloc(reinterpret_cast<void*>(first), last - first, MEM_RESET, PAGE_READWRITE);
+    // DiscardVirtualMemory takes the pages out of the working set at once. MEM_RESET only marks them as not worth
+    // saving: they stay resident until the system is short of memory, so a process that gave back a burst would keep
+    // showing it. It is the fallback, for a range the first call refuses.
+    if (::DiscardVirtualMemory(reinterpret_cast<void*>(first), last - first) != ERROR_SUCCESS)
+        (void)::VirtualAlloc(reinterpret_cast<void*>(first), last - first, MEM_RESET, PAGE_READWRITE);
 }
 VmRegion vmReserve(std::size_t bytes) {
     const std::size_t rounded = roundUpToPage(bytes);

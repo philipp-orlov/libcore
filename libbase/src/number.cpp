@@ -20,9 +20,7 @@
 #endif
 #endif
 
-#if !BASE_FP_CHARCONV
 #include "base/classic_locale.hpp"
-#endif
 
 namespace base {
 
@@ -170,9 +168,8 @@ ParsedDouble parseDouble(std::string_view text) {
         large.assign(text.data(), out.consumed);
         token = large.c_str();
     }
-#if !BASE_FP_CHARCONV
+    // In every build: strtod takes its decimal point from LC_NUMERIC, and would stop at the '.' of "1.5e999".
     ClassicLocale classic;
-#endif
     errno = 0;
     out.value = std::strtod(token, nullptr);
     // ERANGE also flags a subnormal result, which from_chars accepts; only an underflow to zero and an overflow count.

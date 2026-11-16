@@ -92,7 +92,9 @@ TEST(idleLargeBlocksGivePagesBackButKeepTheMapping) {
     CHECK(sys::residentBytes() + (6u << 20) < resident);
     auto again = pool.acquire(8 << 20);
     CHECK(again.data == addr);                               // same mapping
-    CHECK_EQ(static_cast<unsigned char*>(again.data)[4096], 0);   // and it reads as zero again
+#ifndef _WIN32
+    CHECK_EQ(static_cast<unsigned char*>(again.data)[4096], 0);   // and it reads as zero again (Windows: unspecified)
+#endif
     pool.release(again);
 }
 

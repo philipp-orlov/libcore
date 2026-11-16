@@ -15,7 +15,8 @@ function(core_target_defaults target)
         endif()
     elseif(MSVC)
         # C4324: structures are padded by alignas on purpose, to keep hot counters on their own cache lines.
-        target_compile_options(${target} PRIVATE /W4 /permissive- /wd4324)
+        # /utf-8: the sources are UTF-8 (string literals with non-ASCII text), which MSVC otherwise reads in the ANSI code page.
+        target_compile_options(${target} PRIVATE /W4 /permissive- /wd4324 /utf-8)
         # C4996: getenv and fopen are standard C, used where their results are checked.
         target_compile_definitions(${target} PRIVATE _CRT_SECURE_NO_WARNINGS)
     endif()

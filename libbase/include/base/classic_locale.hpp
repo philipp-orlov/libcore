@@ -4,11 +4,13 @@
 // base::ClassicLocale: runs strtod and snprintf in the "C" locale for one scope, whatever the process has set.
 #pragma once
 
-#ifndef _WIN32
 #include <locale.h>
+#ifndef _WIN32
 #if defined(__APPLE__)
 #include <xlocale.h>
 #endif
+#else
+#include <cstring>
 #endif
 
 namespace base {
@@ -31,9 +33,34 @@ private:
 
     locale_t previous_;
 #else
-    // The C runtime's locale is "C" until a program changes it; there is nothing to switch. A user-provided constructor keeps
-    // the compiler from calling the unused scope object an unreferenced variable.
-    ClassicLocale() noexcept {}
+    // The C runtime's locale is "C" until a program changes it, so there is almost never anything to switch: the decimal
+    // point is looked at, and only a program that set another one pays for a per-thread switch of LC_NUMERIC.
+    ClassicLocale() noexcept {
+        const lconv* conventions = localeconv();
+        if (!conventions || !conventions->decimal_point || conventions->decimal_point[0] == '.')
+            return;
+        const char* current = setlocale(LC_NUMERIC, nullptr);
+        if (!current || std::strlen(current) >= sizeof saved_)
+            return;
+        std::strcpy(saved_, current);
+        previousMode_ = _configthreadlocale(_ENABLE_PER_THREAD_LOCALE);
+        setlocale(LC_NUMERIC, "C");
+        switched_ = true;
+    }
+    ~ClassicLocale() {
+        if (!switched_)
+            return;
+        setlocale(LC_NUMERIC, saved_);
+        if (previousMode_ != -1)
+            _configthreadlocale(previousMode_);
+    }
+    ClassicLocale(const ClassicLocale&) = delete;
+    ClassicLocale& operator=(const ClassicLocale&) = delete;
+
+private:
+    char saved_[128];
+    int previousMode_ = -1;
+    bool switched_ = false;
 #endif
 };
 
