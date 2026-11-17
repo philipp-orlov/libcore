@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 
 namespace sys {
 
@@ -24,6 +25,13 @@ std::size_t roundUpToPage(std::size_t bytes) noexcept;
 // base::Error(ResourceExhausted, detail = errno) when the OS refuses; tryVmMap() returns an empty region instead.
 VmRegion vmMap(std::size_t bytes);
 VmRegion tryVmMap(std::size_t bytes) noexcept;
+
+// Asks that later vmMap/tryVmMap (and so vmMapAligned and every allocator built on them) place mappings below
+// `ceiling` (a byte address; 0 turns it off again). The mappings come from the window [ceiling/4, ceiling/2), which the
+// kernel's own placement (executable, libraries, stack, top-down mmap area) does not use on x86-64 or aarch64 Linux.
+// Best effort: when the window is full the kernel chooses, so a caller that depends on it checks the address.
+// Mappings made before the call stay where they are. Meant to be called once, before the threads that map.
+void vmSetAddressCeiling(std::uint64_t ceiling) noexcept;
 
 // Like vmMap, with the start aligned to `alignment` (a power of two, a multiple of the page size). Over-maps and
 // trims, so no address space is wasted afterwards.

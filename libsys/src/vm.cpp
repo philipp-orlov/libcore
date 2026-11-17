@@ -3,6 +3,7 @@
 
 #include "sys/vm.hpp"
 
+#include <atomic>
 #include <cerrno>
 #include <cstdint>
 
@@ -39,12 +40,64 @@ std::size_t roundUpToPage(std::size_t bytes) noexcept {
     return (bytes + p - 1) & ~(p - 1);
 }
 
+namespace {
+
+// The ceiling (0: none) and the cursor that walks down the window [ceiling/4, ceiling/2). The window is far from where
+// the kernel places the executable, the libraries, the stack and its own top-down mappings, on x86-64 (stack near 2^47)
+// and on aarch64 (executable at 0xaaaa..., mappings from 2^48 down).
+std::atomic<std::uint64_t> g_ceiling{0};
+std::atomic<std::uint64_t> g_cursor{0};
+
+// Maps below the ceiling, or returns MAP_FAILED. Tries each slot of the window once per lap of the cursor; a slot that
+// is taken is skipped, a slot that was freed is found again after the cursor wraps.
+void* mapBelowCeiling(std::uint64_t ceiling, std::size_t rounded) noexcept {
+    const std::uint64_t top = ceiling / 2, floor = ceiling / 4;
+    if (rounded >= top - floor)
+        return MAP_FAILED;
+    const std::uint64_t step = (rounded + 0xFFFFF) & ~std::uint64_t{0xFFFFF};  // 1 MiB granularity keeps slots tidy
+    for (unsigned attempt = 0; attempt < 4096; ++attempt) {
+        std::uint64_t cur = g_cursor.load(std::memory_order_relaxed);
+        std::uint64_t addr;
+        for (;;) {
+            const std::uint64_t base = (cur == 0 || cur > top || cur < floor + step) ? top : cur;
+            addr = base - step;
+            if (g_cursor.compare_exchange_weak(cur, addr, std::memory_order_relaxed))
+                break;
+        }
+#ifdef MAP_FIXED_NOREPLACE
+        void* p = ::mmap(reinterpret_cast<void*>(addr), rounded, PROT_READ | PROT_WRITE,
+                         MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+#else
+        void* p = ::mmap(reinterpret_cast<void*>(addr), rounded, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+#endif
+        if (p == MAP_FAILED)
+            continue;
+        if (reinterpret_cast<std::uint64_t>(p) + rounded <= ceiling)
+            return p;
+        ::munmap(p, rounded);  // an old kernel ignored the hint
+    }
+    return MAP_FAILED;
+}
+
+}  // namespace
+
+void vmSetAddressCeiling(std::uint64_t ceiling) noexcept {
+    g_cursor.store(0, std::memory_order_relaxed);
+    g_ceiling.store(ceiling, std::memory_order_release);
+}
+
 VmRegion tryVmMap(std::size_t bytes) noexcept {
     if (bytes == 0)
         return {};
     const std::size_t rounded = roundUpToPage(bytes);
     if (rounded < bytes)
         return {};  // overflow
+    if (const std::uint64_t ceiling = g_ceiling.load(std::memory_order_acquire)) {
+        void* q = mapBelowCeiling(ceiling, rounded);
+        if (q != MAP_FAILED)
+            return {q, rounded};
+        // The window is full or fragmented: let the kernel place it, and whoever set the ceiling checks the address.
+    }
     void* p = ::mmap(nullptr, rounded, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (p == MAP_FAILED)
         return {};
@@ -181,6 +234,9 @@ bool vmProtectWritable(void* p, std::size_t bytes) noexcept {
 }
 
 #else  // ---- Windows ----
+
+// No effect on Windows (not built or run): user addresses there are below 2^47 already.
+void vmSetAddressCeiling(std::uint64_t) noexcept {}
 
 std::size_t pageSize() noexcept {
     static const std::size_t size = [] { SYSTEM_INFO si; ::GetSystemInfo(&si); return static_cast<std::size_t>(si.dwPageSize ? si.dwPageSize : 4096); }();
