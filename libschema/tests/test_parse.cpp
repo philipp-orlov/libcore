@@ -14,7 +14,7 @@
 namespace {
 std::string dir() {
     static const std::string d = "/tmp/libschema_test_" + std::to_string(::getpid());
-    static bool made = (::system(("mkdir -p " + d).c_str()), true);
+    static const bool made = ::system(("mkdir -p " + d).c_str()) == 0;
     (void)made;
     return d;
 }
