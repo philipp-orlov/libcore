@@ -56,6 +56,7 @@ public:
         std::size_t minIdleBlocks = 16;     // idle blocks whose pages trim() always leaves resident
         unsigned idleFraction = 8;          // ... or 1/this of the blocks in use, whichever is more
         void* owner = nullptr;              // what ownerOf returns for a small slot of this heap
+        std::size_t hugeAfter = 0;          // segments mapped before the next ones ask for huge pages; 0 = never
     };
 
     struct Stats {

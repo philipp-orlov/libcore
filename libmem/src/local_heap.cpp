@@ -76,7 +76,12 @@ LocalHeap::Segment* LocalHeap::mapSegment() {
     const sys::VmRegion region = sys::tryVmMapAligned(kSegmentBytes, kSegmentBytes);
     if (!region.base)
         throw std::bad_alloc();
-    sys::vmAdviseNoHuge(region.base, region.bytes);  // this heap gives pages back by the block
+    // This heap gives pages back by the block, which splits a huge page; past `hugeAfter` segments the heap is large enough
+    // that the misses of the page tables cost more.
+    if (options_.hugeAfter && segmentCount_ >= options_.hugeAfter)
+        sys::vmAdviseHuge(region.base, region.bytes);
+    else
+        sys::vmAdviseNoHuge(region.base, region.bytes);
     auto* segment = static_cast<Segment*>(region.base);
     segment->prevAll = nullptr;
     segment->nextAll = segments_;

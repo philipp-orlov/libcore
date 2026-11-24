@@ -132,10 +132,9 @@ TEST(survivorsScatteredThroughBlocksDoNotKeepOtherClassesOut) {
         heap.deallocate(p, 64);
 }
 
-TEST(trimGivesASpikeBack) {
-    if (underSanitizer())
-        return;  // shadow memory and quarantine, not the heap, decide the resident size there
-    mem::LocalHeap heap;
+namespace {
+void spikeGoesBack(const mem::LocalHeap::Options& options) {
+    mem::LocalHeap heap(options);
     const std::size_t idle = sys::residentBytes();
     constexpr std::size_t kBytes = std::size_t{512} << 20;
     std::vector<void*> objects;
@@ -154,6 +153,21 @@ TEST(trimGivesASpikeBack) {
     CHECK(s.mappedBytes < peakMapped / 8);
     CHECK(s.committedBytes <= heapBaseline.committedBytes + 32 * kBlock);
     CHECK(sys::residentBytes() < idle + (std::size_t{32} << 20));
+}
+}  // namespace
+
+TEST(trimGivesASpikeBack) {
+    if (underSanitizer())
+        return;  // shadow memory and quarantine, not the heap, decide the resident size there
+    spikeGoesBack({});
+}
+
+TEST(trimGivesASpikeBackFromHugePagesToo) {
+    if (underSanitizer())
+        return;
+    mem::LocalHeap::Options options;
+    options.hugeAfter = 1;
+    spikeGoesBack(options);
 }
 
 TEST(aPartlyUsedSegmentKeepsItsLiveBlocksThroughTrim) {
