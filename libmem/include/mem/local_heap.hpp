@@ -167,6 +167,49 @@ public:
     static constexpr std::size_t kBlockSlotBytesOffset = offsetof(Block, slotBytes);
     Block* const* currentBlockOf(std::size_t bytes) const noexcept { return &classes_[classOf(bytes)].current; }
 
+    // Frees many small slots with one update of a block per run of slots in it. A deallocate reads and writes the block's
+    // free list and its count, so each one of a row waits on the one before; a run keeps both in registers. Use it for
+    // a sweep. `add` each slot (a request of at most kMaxSmall: the block knows its size), then `flush`; the destructor
+    // flushes too. Nothing else may be allocated from or freed to the heap between the first `add` and the flush.
+    class FreeRun {
+    public:
+        explicit FreeRun(LocalHeap& heap) noexcept : heap_(heap) {}
+        ~FreeRun() { flush(); }
+        FreeRun(const FreeRun&) = delete;
+        FreeRun& operator=(const FreeRun&) = delete;
+        BASE_ALWAYS_INLINE void add(void* p) noexcept {
+            Block* block = blockOf(p);
+            if (BASE_UNLIKELY(block != block_)) {
+                flush();
+                block_ = block;
+                head_ = block->free;
+                wasFull_ = !block->free && block->bump == block->end;
+            }
+            auto* slot = static_cast<Slot*>(p);
+            slot->next = head_;
+            head_ = slot;
+            ++count_;
+            poison(static_cast<char*>(p) + sizeof(Slot), block->slotBytes - sizeof(Slot));
+        }
+        void flush() noexcept {
+            if (!block_)
+                return;
+            block_->free = head_;
+            block_->live -= count_;
+            if (BASE_UNLIKELY(wasFull_ || block_->live == 0))
+                heap_.blockChanged(block_, wasFull_);
+            block_ = nullptr;
+            count_ = 0;
+        }
+
+    private:
+        LocalHeap& heap_;
+        Block* block_ = nullptr;
+        Slot* head_ = nullptr;
+        std::uint32_t count_ = 0;
+        bool wasFull_ = false;
+    };
+
 private:
     static constexpr std::size_t kClassCount = 48;  // 32 at 16-byte steps up to 512, then four per doubling
 

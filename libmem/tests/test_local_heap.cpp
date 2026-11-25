@@ -188,6 +188,68 @@ TEST(aPartlyUsedSegmentKeepsItsLiveBlocksThroughTrim) {
     }
 }
 
+TEST(aRunOfFreesLeavesTheHeapAsSingleFreesDo) {
+    // The same slots of three classes freed from two heaps, one by rows (which cross blocks: full blocks become partial,
+    // drained ones go back) and one slot by slot: both end with the same blocks, and what is left is intact.
+    const std::size_t sizes[] = {48, 48, 112, 4096};
+    mem::LocalHeap::Stats after[2], drained[2];
+    for (int byRun = 0; byRun < 2; ++byRun) {
+        mem::LocalHeap heap;
+        std::vector<std::pair<unsigned char*, std::size_t>> objects;
+        for (std::size_t i = 0; i < 60000; ++i) {
+            const std::size_t bytes = sizes[i % 4];
+            auto* p = static_cast<unsigned char*>(heap.allocate(bytes));
+            p[bytes - 1] = static_cast<unsigned char>(i);
+            objects.push_back({p, bytes});
+        }
+        {
+            mem::LocalHeap::FreeRun run(heap);
+            for (std::size_t i = 0; i < objects.size(); ++i) {
+                if (i % 7 == 0)
+                    continue;
+                if (byRun)
+                    run.add(objects[i].first);
+                else
+                    heap.deallocate(objects[i].first, objects[i].second);
+            }
+        }
+        after[byRun] = heap.stats();
+        for (std::size_t i = 0; i < objects.size(); i += 7)
+            CHECK_EQ(objects[i].first[objects[i].second - 1], static_cast<unsigned char>(i));
+        std::size_t out = 0;
+        heap.forEachSlot([](void* context, void*) { ++*static_cast<std::size_t*>(context); }, &out);
+        CHECK_EQ(out, (objects.size() + 6) / 7);
+        std::vector<void*> again;
+        for (std::size_t i = 0; i < 20000; ++i)
+            again.push_back(heap.allocate(48));
+        {
+            mem::LocalHeap::FreeRun run(heap);
+            for (void* p : again) {
+                if (byRun)
+                    run.add(p);
+                else
+                    heap.deallocate(p, 48);
+            }
+            for (std::size_t i = 0; i < objects.size(); i += 7) {
+                if (byRun)
+                    run.add(objects[i].first);
+                else
+                    heap.deallocate(objects[i].first, objects[i].second);
+            }
+            run.flush();
+            run.flush();
+        }
+        out = 0;
+        heap.forEachSlot([](void* context, void*) { ++*static_cast<std::size_t*>(context); }, &out);
+        CHECK_EQ(out, std::size_t{0});
+        drained[byRun] = heap.stats();
+    }
+    CHECK_EQ(after[0].blocksInUse, after[1].blocksInUse);
+    CHECK_EQ(after[0].idleBlocks, after[1].idleBlocks);
+    CHECK_EQ(drained[0].blocksInUse, drained[1].blocksInUse);
+    CHECK_EQ(drained[0].idleBlocks, drained[1].idleBlocks);
+}
+
 TEST(aSmallLoopTouchesNeitherTheHeapNorTheOs) {
     mem::LocalHeap heap;
     void* warm = heap.allocate(48);
